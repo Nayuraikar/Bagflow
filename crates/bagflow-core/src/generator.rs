@@ -176,3 +176,86 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Parallel generator (Rayon). Must give the exact same output as `generate`.
+// ---------------------------------------------------------------------------
+use rayon::prelude::*;
+
+const FLIGHT_BATCH: usize = 2048;
+
+pub fn generate_par(cfg: &GenConfig, threads: usize) -> (Vec<Flight>, BagSoA) {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut frng = stream_rng(cfg.seed, Stream::Flights);
+        let mut flights: Vec<Flight> = Vec::new();
+        let mut recs: Vec<BagRec> = Vec::with_capacity(cfg.target_bags + 1000);
+        let mut id = 0u32;
+
+        while recs.len() < cfg.target_bags {
+            // 1. flights are drawn sequentially (cheap, one shared stream)
+            let batch: Vec<Flight> = (0..FLIGHT_BATCH)
+                .map(|_| {
+                    let f = gen_flight(&mut frng, id);
+                    id += 1;
+                    f
+                })
+                .collect();
+
+            // 2. bags per flight in parallel (each flight has its own RNG stream);
+            //    collect() keeps flight order
+            let per_flight: Vec<Vec<BagRec>> = batch
+                .par_iter()
+                .map(|f| {
+                    let mut v = Vec::new();
+                    gen_bags(cfg.seed, f, &mut v);
+                    v
+                })
+                .collect();
+
+            // 3. append in flight order, stopping exactly where the sequential version stops
+            for (f, v) in batch.into_iter().zip(per_flight) {
+                if recs.len() >= cfg.target_bags {
+                    break;
+                }
+                recs.extend(v);
+                flights.push(f);
+            }
+        }
+
+        // stable parallel sort, same key as the sequential version
+        recs.par_sort_by_key(|r| (r.arrival, r.flight, r.pax));
+
+        // build every column in parallel
+        let soa = BagSoA {
+            id: (0..recs.len() as u32).into_par_iter().collect(),
+            pax: recs.par_iter().map(|r| r.pax).collect(),
+            flight: recs.par_iter().map(|r| r.flight).collect(),
+            weight_dg: recs.par_iter().map(|r| r.weight_dg).collect(),
+            priority: recs.par_iter().map(|r| r.priority).collect(),
+            flags: recs.par_iter().map(|r| r.flags).collect(),
+            arrival_s: recs.par_iter().map(|r| r.arrival).collect(),
+            deadline_s: recs.par_iter().map(|r| r.deadline).collect(),
+        };
+        (flights, soa)
+    })
+}
+
+#[cfg(test)]
+mod par_tests {
+    use super::*;
+
+    #[test]
+    fn parallel_matches_sequential() {
+        let cfg = GenConfig { seed: 11, target_bags: 30_000 };
+        let (sf, ss) = generate(&cfg);
+        for threads in [1, 2, 4] {
+            let (pf, ps) = generate_par(&cfg, threads);
+            assert_eq!(sf.len(), pf.len());
+            assert_eq!(ss.checksum(), ps.checksum(), "threads = {threads}");
+        }
+    }
+}
