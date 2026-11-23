@@ -1,0 +1,13 @@
+target/
+node_modules/
+dist/
+build/
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+results/*.parquet
+results/*.bin
+*.o
+*.metallib
+.ipynb_checkpoints/
