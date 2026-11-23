@@ -1,0 +1,8 @@
+benchmark: 10000000 bags, seed 42, 8 logical cores
+
+backend     time (s)        bags/s   speedup  efficiency  output
+seq            3.014       3317502     1.00x           -  checksum 2fa040bc2723a302
+rayon-1        4.047       2470701     0.74x         74%  identical
+rayon-2        1.978       5055627     1.52x         76%  identical
+rayon-4        1.002       9981397     3.01x         75%  identical
+rayon-8        0.606      16489376     4.97x         62%  identical

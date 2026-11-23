@@ -11,3 +11,4 @@ results/*.bin
 *.o
 *.metallib
 .ipynb_checkpoints/
+results/*.csv
