@@ -1,0 +1,45 @@
+strategy comparison: 250086 bags, seed 42, servers x1
+
+routing     queue       delayed  tight delayed    mean s     p95 s  max queue   sim s
+dijkstra    fcfs         77.42%         82.61%      8706     20456      24677    0.71
+dijkstra    priority     73.82%          0.00%      8704     20709      24661    0.73
+dijkstra    edf          79.59%         80.52%      8704     20547      24696    0.74
+dijkstra    spt          23.50%         24.36%      4799     25747      22998    0.71
+ecmp        fcfs         53.92%         62.22%      4414      9819      19385    0.71
+ecmp        priority     53.52%          0.00%      4409     10056      19317    0.71
+ecmp        edf          55.34%         56.79%      4415     10263      19451    0.77
+ecmp        spt          13.62%         14.34%      1731     13312       6130    0.80
+congestion  fcfs         53.75%         61.96%      4375      9711      20318    0.66
+congestion  priority     53.40%          0.00%      4365      9831      20103    0.71
+congestion  edf          57.40%         58.85%      4380     10208      20124    0.90
+congestion  spt           9.09%          9.50%      1118      8422       6130    0.72
+deadline    fcfs         53.92%         62.02%      4395      9764      20317    0.72
+deadline    priority     53.64%          0.00%      4391      9877      20258    0.82
+deadline    edf          56.84%         58.63%      4394     10227      20345    0.72
+deadline    spt          11.68%         12.14%      1388     10664       6130    0.76
+
+node detail: dijkstra + fcfs
+node            arrivals  avg wait s  max queue   util
+CheckIn #0        250086       454.3       8145    49%
+Identification #1    250086       642.9      10206    55%
+Screening #2      167678      3111.3      19385    74%
+Screening #3       82408      3576.8       9323    79%
+Sorter #4         167678      6408.5      24677    92%
+Sorter #5              0         0.0          0     0%
+Sorter #6          82408         0.1          6    45%
+Loading #7         81768         0.0          5    45%
+Loading #8         85910         0.0          5    47%
+Loading #9         82408         0.0          6    45%
+
+node detail: congestion + fcfs
+node            arrivals  avg wait s  max queue   util
+CheckIn #0        250086       454.3       8145    57%
+Identification #1    250086       642.9      10206    63%
+Screening #2      171056      3350.6      20318    86%
+Screening #3       79030      2962.1       8371    87%
+Sorter #4         106678         2.1         34    68%
+Sorter #5          76528         2.4         42    48%
+Sorter #6          66880         0.3         21    42%
+Loading #7         81768         0.3         26    52%
+Loading #8         85910         0.3         17    54%
+Loading #9         82408         0.2         33    52%

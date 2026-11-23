@@ -17,8 +17,12 @@ fn main() {
     let n: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(250_000);
     let threads = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(1);
     let (_, bags) = generate_par(&GenConfig { seed: 42, target_bags: n }, threads);
-    let k = (bags.len() as f64 / 250_000.0).ceil().max(1.0) as u16;
-    let (nodes, edges) = airport_network(k);
+    // k = servers multiplier relative to the 250k baseline. Default 1 (stressed); try --k 1 with more bags.
+    let k: u16 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(1);
+    let (mut nodes, edges) = airport_network(k);
+    // optional 3rd arg: percent of default server counts (e.g. 70 = 30% fewer servers) for extra stress
+    let pct: u32 = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(100);
+    for nd in nodes.iter_mut() { nd.servers = ((nd.servers as u32 * pct / 100).max(1)) as u16; }
     let kinds: Vec<String> = nodes.iter().map(|x| format!("{:?} #{}", x.kind, x.id)).collect();
 
     println!("strategy comparison: {} bags, seed 42, servers x{k}\n", bags.len());

@@ -23,3 +23,7 @@
 - Policies: FCFS, Priority (tight=0, priority=1, standard=2), EDF (deadline), SPT (sampled service time).
 - Service times are a hash of (seed, bag, stage), so all strategies see identical randomness (common random numbers). Lognormal sigma 0.4, 5% screening inspection (+ lognormal mean 20 s).
 - Edge capacities and failures are not modelled yet (Phase 7). Results in results/compare_phase4.txt.
+- Caveat: SPT's p95 advantage holds only at 100% load. In overload (70%, 55%) SPT lowers the mean and the delayed share but can raise the tail (dijkstra+spt p95 25,747 s vs 20,456 s with FCFS at 70%), because long jobs are starved.
+- Phase 4 first run (results/compare_phase4.txt) used servers x2: over-provisioned, 0% delayed, all strategies identical; kept as a sanity check.
+- Informative comparison: results/compare_phase4_stressed.txt (servers x1, 100%). Overload cases: compare_phase4_overload70.txt and compare_phase4_overload55.txt, where 50-90% of bags are delayed and EDF no longer helps.
+- Findings: queue policy matters more than routing at moderate load. Priority removes tight-connection delays, EDF removes all delays at 100% load but raises p95, SPT gives the lowest mean. EDF degrades under overload.
