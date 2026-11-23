@@ -29,6 +29,7 @@ name = "bagflow-sim"
 version = "0.1.0"
 dependencies = [
  "bagflow-core",
+ "serde_json",
 ]
 
 [[package]]
