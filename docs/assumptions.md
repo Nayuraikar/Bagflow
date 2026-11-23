@@ -15,3 +15,11 @@
 - Sequential engine, 6-node chain, FCFS, lognormal service, 5% inspection holds. Throughput about 0.35-0.5M bags/s (about 4M events/s).
 - results/scaling_seq_fixed_network.txt: network fixed at 250k-sized capacity. At 1M+ bags screening saturates and 95-99% of bags are delayed. This shows capacity saturation, not an engine fault.
 - results/scaling_seq.txt: servers scaled by ceil(bags/250k), so load per server stays constant. Use these as the baseline for parallel backends.
+
+## Phase 4 routing and queue policies
+- Layered network: check-in, identification, 2 screening lines (A: 10x1.8 s, B: 6x2.5 s), 3 sorters (4x1 s), 3 loading areas (12x4 s). Loading area = flight id mod 3; screening line and sorter are routing choices.
+- Dijkstra: reverse-graph shortest path on free-flow time (travel + mean service), ties to lowest node id. ECMP: same costs, near-equal options (within 0.1%) chosen by bag id. Congestion: static cost + estimated wait ((queue + busy + 1 - servers)/servers x mean service). Deadline: congestion routing if slack < 20 min, else ECMP.
+- A* not implemented: with an exact distance heuristic on this layered graph it expands the same nodes as Dijkstra.
+- Policies: FCFS, Priority (tight=0, priority=1, standard=2), EDF (deadline), SPT (sampled service time).
+- Service times are a hash of (seed, bag, stage), so all strategies see identical randomness (common random numbers). Lognormal sigma 0.4, 5% screening inspection (+ lognormal mean 20 s).
+- Edge capacities and failures are not modelled yet (Phase 7). Results in results/compare_phase4.txt.
