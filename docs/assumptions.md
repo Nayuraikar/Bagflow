@@ -8,3 +8,4 @@
 - Priority: origin 3% priority; transfer 15% tight connection, 5% priority. 2% special bags.
 - Loading deadline: departure minus 20 min (origin) or 15 min (transfer).
 - Departure banks centred at 07:00, 09:30, 12:30, 15:00, 18:30, 21:00 (sd 45 min).
+- Observed Wq errors are small and mostly negative (-3.3% to +0.4%). Likely causes: arrival times quantised to whole seconds (slightly less bursty than true Poisson) and the empty-system start. Both bias waits downward.

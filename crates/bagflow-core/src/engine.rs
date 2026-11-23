@@ -6,12 +6,25 @@ use crate::state::BagState;
 use crate::types::*;
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
-use rand_distr::{Distribution, LogNormal};
+use rand_distr::{Distribution, Exp, LogNormal};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+
+/// Engine options. Default = Phase 2 behaviour (lognormal service, 5% inspection).
+/// Validation runs use exponential service and no inspection to match M/M/c theory.
+#[derive(Debug, Clone, Copy)]
+pub struct SimConfig {
+    pub exponential: bool,
+    pub hold_prob: f64,
+}
+impl Default for SimConfig {
+    fn default() -> Self {
+        SimConfig { exponential: false, hold_prob: HOLD_PROB }
+    }
+}
 
 const SERVICE_SIGMA: f64 = 0.4; // lognormal spread of service times
 const HOLD_PROB: f64 = 0.05; // share of bags escalated to inspection
@@ -43,6 +56,7 @@ struct Sim<'a> {
     nodes: &'a [Node],
     edges: &'a [Edge],
     rng: ChaCha8Rng,
+    cfg: SimConfig,
     heap: BinaryHeap<Reverse<ScheduledEvent>>,
     seq: u64,
     rt: Vec<NodeRt>,
@@ -67,6 +81,11 @@ impl<'a> Sim<'a> {
     fn lognormal_ms(&mut self, mean_ms: f64) -> u64 {
         let mu = mean_ms.ln() - SERVICE_SIGMA * SERVICE_SIGMA / 2.0;
         let d = LogNormal::new(mu, SERVICE_SIGMA).unwrap();
+        (d.sample(&mut self.rng) as u64).max(1)
+    }
+
+    fn exp_ms(&mut self, mean_ms: f64) -> u64 {
+        let d = Exp::new(1.0 / mean_ms).unwrap();
         (d.sample(&mut self.rng) as u64).max(1)
     }
 
@@ -109,7 +128,7 @@ impl<'a> Sim<'a> {
         self.rt[n].busy += 1;
         self.stats[n].total_wait_ms += t - enqueued;
         let mean = self.nodes[n].mean_service_ms as f64;
-        let dur = self.lognormal_ms(mean);
+        let dur = if self.cfg.exponential { self.exp_ms(mean) } else { self.lognormal_ms(mean) };
         self.stats[n].busy_ms += dur;
         self.push(t + dur, EventKind::ServiceComplete, bag, node);
     }
@@ -117,7 +136,7 @@ impl<'a> Sim<'a> {
     fn complete(&mut self, t: u64, bag: u32, node: u16) {
         let b = bag as usize;
         if node == N_SCREEN {
-            if self.state[b] == BagState::Screening && self.rng.gen_bool(HOLD_PROB) {
+            if self.state[b] == BagState::Screening && self.rng.gen_bool(self.cfg.hold_prob) {
                 // escalate: the bag keeps its server for an extra inspection time
                 self.transition(t, bag, BagState::HeldForInspection, node);
                 let extra = self.lognormal_ms(HOLD_MEAN_MS);
@@ -142,7 +161,7 @@ impl<'a> Sim<'a> {
         if let Some((next, enq)) = self.rt[n].queue.pop_front() {
             self.start_service(t, next, node, enq); // FCFS
         }
-        if node != N_LOADING {
+        if node != N_LOADING && n < self.edges.len() {
             let (travel, to) = {
                 let e = &self.edges[n];
                 debug_assert_eq!(e.from, node);
@@ -154,11 +173,16 @@ impl<'a> Sim<'a> {
 }
 
 pub fn simulate(bags: &BagSoA, nodes: &[Node], edges: &[Edge], seed: u64) -> SimResult {
+    simulate_cfg(bags, nodes, edges, seed, &SimConfig::default())
+}
+
+pub fn simulate_cfg(bags: &BagSoA, nodes: &[Node], edges: &[Edge], seed: u64, cfg: &SimConfig) -> SimResult {
     let mut sim = Sim {
         bags,
         nodes,
         edges,
         rng: stream_rng(seed, Stream::Screening),
+        cfg: *cfg,
         heap: BinaryHeap::new(),
         seq: 0,
         rt: (0..nodes.len()).map(|_| NodeRt { queue: VecDeque::new(), busy: 0 }).collect(),
