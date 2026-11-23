@@ -1,0 +1,6 @@
+sequential engine scaling, seed 42
+
+       bags    gen (s)     sim (s)        bags/s      events   loaded  delayed  checksum
+     250086       0.04        0.67        371795     2088212   242563     7523  66f0c5e9b8246c95
+    1000065       0.07        3.33        299895     8351022   967482    32583  35b53ba38e62e418
+    5000095       0.34       20.84        239872    41751473  4840762   159333  cd37f64e5353ff66
