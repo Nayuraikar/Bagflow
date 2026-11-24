@@ -36,3 +36,4 @@
 - ConnectingRush: 60% of transfer bags arriving 17:00-18:30 become tight-connection with a 30 min deadline.
 - SorterOverload: 60% of bags 17:00-19:00 redirected to loading area 7 (flight id rounded down to a multiple of 3).
 - Not yet modelled: early-bag storage, MCT-based transfers, loader limits, edge capacity limits, random MTBF failures, multi-stage screening beyond the 5% inspection hold.
+- Findings: ConveyorFailure is almost invisible (identical to Normal within 1 s mean) because screening, not the conveyor, is the bottleneck and bags reroute over the other two sorter exits. ScreeningDelay and PeakSurge are the most damaging (16-21% delayed vs 3-4%). EDF degrades under overload (ScreeningDelay dijkstra: 20.6% EDF vs 17.9% FCFS). SorterOverload shows the largest routing benefit: congestion+EDF 0.0% delayed vs dijkstra+EDF 8.5%.
