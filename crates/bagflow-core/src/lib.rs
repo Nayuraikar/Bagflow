@@ -5,6 +5,7 @@ pub mod generator;
 pub mod network;
 pub mod queueing;
 pub mod rng;
+pub mod scenarios;
 pub mod soa;
 pub mod state;
 pub mod types;

@@ -110,6 +110,13 @@ fn ecmp(c: &[(u16, u32, u64)], bag: u32) -> (u16, u32) {
     (x.0, x.1)
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Target { Node(u16), Edge(usize) }
+
+/// Timed outage. Node: capacity drops to servers * factor. Edge: goes down (factor ignored).
+#[derive(Clone, Copy, Debug)]
+pub struct Outage { pub target: Target, pub start_s: u32, pub end_s: u32, pub factor: f64 }
+
 // queue item: (policy key, seq, bag, service ms, enqueued at ms). Min-heap via Reverse.
 type QItem = (u64, u64, u32, u32, u64);
 
@@ -131,6 +138,9 @@ struct G<'a> {
     busy_ms: Vec<u64>,
     max_q: Vec<u32>,
     finish: Vec<u64>,
+    cap: Vec<u16>,
+    edge_up: Vec<bool>,
+    eidx: Vec<Vec<usize>>,
 }
 
 impl<'a> G<'a> {
@@ -165,7 +175,7 @@ impl<'a> G<'a> {
 
     fn wait_est(&self, v: u16) -> f64 {
         let n = v as usize;
-        let s = self.nodes[n].servers as f64;
+        let s = self.cap[n].max(1) as f64;
         let load = self.queues[n].len() as f64 + self.busy[n] as f64 + 1.0;
         ((load - s).max(0.0) / s) * self.nodes[n].mean_service_ms as f64
     }
@@ -187,11 +197,16 @@ impl<'a> G<'a> {
         let b = bag as usize;
         let li = self.bags.flight[b] as usize % self.loaders.len();
         let row = &self.dist[li];
-        let c: Vec<(u16, u32, u64)> = self.out[u]
+        let all: Vec<(u16, u32, u64, bool)> = self.out[u]
             .iter()
-            .filter(|(v, _)| row[*v as usize] < INF)
-            .map(|(v, tr)| (*v, *tr, *tr as u64 + row[*v as usize]))
+            .enumerate()
+            .filter(|(_, (v, _))| row[*v as usize] < INF)
+            .map(|(i, (v, tr))| (*v, *tr, *tr as u64 + row[*v as usize], self.edge_up[self.eidx[u][i]]))
             .collect();
+        let mut c: Vec<(u16, u32, u64)> = all.iter().filter(|x| x.3).map(|x| (x.0, x.1, x.2)).collect();
+        if c.is_empty() {
+            c = all.iter().map(|x| (x.0, x.1, x.2)).collect(); // no live alternative: use the edge anyway
+        }
         debug_assert!(!c.is_empty());
         match self.strat {
             Strategy::Dijkstra => first_min(&c),
@@ -204,11 +219,32 @@ impl<'a> G<'a> {
         }
     }
 
+    fn outage(&mut self, t: u64, i: usize, start: bool, outs: &[Outage]) {
+        let o = outs[i];
+        match o.target {
+            Target::Node(x) => {
+                let n = x as usize;
+                if start {
+                    self.cap[n] = (self.nodes[n].servers as f64 * o.factor).floor() as u16;
+                } else {
+                    self.cap[n] = self.nodes[n].servers;
+                    while self.busy[n] < self.cap[n] {
+                        match self.queues[n].pop() {
+                            Some(Reverse((_, _, nb, nd, enq))) => self.start(t, nb, x, nd, enq),
+                            None => break,
+                        }
+                    }
+                }
+            }
+            Target::Edge(e) => self.edge_up[e] = !start,
+        }
+    }
+
     fn arrive(&mut self, t: u64, bag: u32, node: u16) {
         let n = node as usize;
         self.arrivals[n] += 1;
         let dur = self.dur_ms(bag, n);
-        if self.busy[n] < self.nodes[n].servers {
+        if self.busy[n] < self.cap[n] {
             self.start(t, bag, node, dur, t);
         } else {
             let k = self.key(bag, dur);
@@ -232,8 +268,10 @@ impl<'a> G<'a> {
     fn complete(&mut self, t: u64, bag: u32, node: u16) {
         let n = node as usize;
         self.busy[n] -= 1;
-        if let Some(Reverse((_, _, nb, ndur, enq))) = self.queues[n].pop() {
-            self.start(t, nb, node, ndur, enq);
+        if self.busy[n] < self.cap[n] {
+            if let Some(Reverse((_, _, nb, ndur, enq))) = self.queues[n].pop() {
+                self.start(t, nb, node, ndur, enq);
+            }
         }
         if self.nodes[n].kind == NodeKind::Loading {
             self.finish[bag as usize] = t;
@@ -261,9 +299,19 @@ pub struct RunStats {
 }
 
 pub fn run(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64) -> RunStats {
+    run_with(bags, nodes, edges, strat, policy, seed, &[])
+}
+
+pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage]) -> RunStats {
     let nn = nodes.len();
     let (out, _) = adjacency(nn, edges);
     let (loaders, dist) = dijkstra_table(nodes, edges);
+    let mut eidx: Vec<Vec<usize>> = vec![Vec::new(); nn];
+    for (i, e) in edges.iter().enumerate() {
+        if e.online {
+            eidx[e.from as usize].push(i);
+        }
+    }
     let mut g = G {
         bags,
         nodes,
@@ -282,9 +330,17 @@ pub fn run(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, polic
         busy_ms: vec![0; nn],
         max_q: vec![0; nn],
         finish: vec![0; bags.len()],
+        cap: nodes.iter().map(|x| x.servers).collect(),
+        edge_up: vec![true; edges.len()],
+        eidx,
     };
     for i in 0..bags.len() {
         g.push(bags.arrival_s[i] as u64 * 1000, EventKind::Arrival, i as u32, 0);
+    }
+    for (i, o) in outages.iter().enumerate() {
+        let nd = match o.target { Target::Node(x) => x, Target::Edge(_) => 0 };
+        g.push(o.start_s as u64 * 1000, EventKind::Failure, i as u32, nd);
+        g.push(o.end_s as u64 * 1000, EventKind::Repair, i as u32, nd);
     }
     let mut end_ms = 0;
     while let Some(Reverse(ev)) = g.heap.pop() {
@@ -293,7 +349,8 @@ pub fn run(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, polic
             EventKind::Arrival => g.arrive(ev.time_ms, ev.bag_id, 0),
             EventKind::TransitComplete => g.arrive(ev.time_ms, ev.bag_id, ev.node),
             EventKind::ServiceComplete => g.complete(ev.time_ms, ev.bag_id, ev.node),
-            EventKind::Repair | EventKind::Failure => {}
+            EventKind::Failure => g.outage(ev.time_ms, ev.bag_id as usize, true, outages),
+            EventKind::Repair => g.outage(ev.time_ms, ev.bag_id as usize, false, outages),
         }
     }
 

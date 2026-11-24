@@ -27,3 +27,12 @@
 - Phase 4 first run (results/compare_phase4.txt) used servers x2: over-provisioned, 0% delayed, all strategies identical; kept as a sanity check.
 - Informative comparison: results/compare_phase4_stressed.txt (servers x1, 100%). Overload cases: compare_phase4_overload70.txt and compare_phase4_overload55.txt, where 50-90% of bags are delayed and EDF no longer helps.
 - Findings: queue policy matters more than routing at moderate load. Priority removes tight-connection delays, EDF removes all delays at 100% load but raises p95, SPT gives the lowest mean. EDF degrades under overload.
+
+## Phase 5 scenarios (results/scenarios_phase5.txt)
+- Window 17:00-19:00 on the 250k dataset, network at servers x1 (100%). Outages: 90 min starting 17:00.
+- PeakSurge: 50% extra bags cloned from arrivals 17:00-18:00, arriving up to 10 min later (same flight and deadline).
+- ConveyorFailure: edge screening A -> sorter 4 down; bags reroute over live edges (if none are live the edge is used anyway).
+- ScreeningDelay: screening line A capacity x0.4. Bags already in service finish; queued bags wait. Capacity restored at repair and the queue restarts.
+- ConnectingRush: 60% of transfer bags arriving 17:00-18:30 become tight-connection with a 30 min deadline.
+- SorterOverload: 60% of bags 17:00-19:00 redirected to loading area 7 (flight id rounded down to a multiple of 3).
+- Not yet modelled: early-bag storage, MCT-based transfers, loader limits, edge capacity limits, random MTBF failures, multi-stage screening beyond the 5% inspection hold.
