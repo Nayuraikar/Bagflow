@@ -24,3 +24,9 @@ Correctness: every rank count gives identical counts and slack sum; the 10M resu
 Findings (M1, 50M): compute 3.9x at 4 ranks, 4.7x at 8 (memory-bound). Reduce is negligible (24 bytes). Scatter load (278 ms at 8 ranks) dwarfs compute (17 ms): end-to-end only 1.43x, versus 3.47x in read mode.
 Results: results/mpi_10M.txt, results/mpi_50M.txt (Mac M1). Kaggle run to follow: results/mpi_50M_kaggle.txt (4 cores).
 - MPI on Kaggle (50M, 4 logical cores): same result as the Mac. Compute 2.29x at 4 ranks (memory-bound, likely 2 physical cores). Scatter load grows with ranks (498 to 856 ms), so end-to-end is 0.63x at 4 ranks: communication cost outweighs compute gains.
+
+# Dashboard (Phase 7)
+crates/bagflow-api: Axum 0.7 server on 127.0.0.1:3001. Generates the 250k dataset at startup; GET /api/info and GET /api/run?scenario=&routing=&policy=&pct= run the real engine (engine2 + scenarios) and return JSON. Vite proxies /api.
+web/: three tabs. Replay (Phase 2 Pixi page), Scenarios (any scenario x routing x policy x capacity, compare 4 routings), Benchmark lab (kernel, transfer and MPI charts; numbers embedded in BenchPage.tsx from the result files).
+Verified: API Normal/dijkstra/fcfs gives 3.697% delayed, identical to the CLI tables.
+Not included: WebSocket live streaming, click-to-fail conveyor, side-by-side synced replays, ParticleContainer level-of-detail.

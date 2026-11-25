@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bagflow-core", "crates/bagflow-sim", "crates/bagflow-bench", "crates/bagflow-kernels"]
+members = ["crates/bagflow-core", "crates/bagflow-sim", "crates/bagflow-bench", "crates/bagflow-kernels", "crates/bagflow-api"]
 
 [workspace.dependencies]
 rand = "0.8"
