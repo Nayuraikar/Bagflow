@@ -1,0 +1,10 @@
+Kaggle (Xeon 2.0 GHz, 4 logical cores, Open MPI, --oversubscribe), 50M bags
+mode     ranks    load ms  compute ms  reduce ms   compute   end-to-end  result
+read         1      104.4       58.02      0.000     1.00x        1.00x  identical
+read         2       69.3       29.16      0.001     1.99x        1.65x  identical
+read         4       47.4       25.29      0.007     2.29x        2.23x  identical
+scatter      1      498.1       57.85      0.000     1.00x        1.00x  identical
+scatter      2      551.8       29.49      0.002     1.96x        0.96x  identical
+scatter      4      855.8       25.90      0.006     2.23x        0.63x  identical
+
+bags: on-track / at-risk / critical / slack sum = 35861889 9721115 4417095 139195725044

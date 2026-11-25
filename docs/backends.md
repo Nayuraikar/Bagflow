@@ -23,3 +23,4 @@ kernels/mpi/risk_mpi.cpp: same risk formula, one thread per rank, bags split int
 Correctness: every rank count gives identical counts and slack sum; the 10M result matches the Rust scalar answer (7172190 1944284 883694, slack 27835824747).
 Findings (M1, 50M): compute 3.9x at 4 ranks, 4.7x at 8 (memory-bound). Reduce is negligible (24 bytes). Scatter load (278 ms at 8 ranks) dwarfs compute (17 ms): end-to-end only 1.43x, versus 3.47x in read mode.
 Results: results/mpi_10M.txt, results/mpi_50M.txt (Mac M1). Kaggle run to follow: results/mpi_50M_kaggle.txt (4 cores).
+- MPI on Kaggle (50M, 4 logical cores): same result as the Mac. Compute 2.29x at 4 ranks (memory-bound, likely 2 physical cores). Scatter load grows with ranks (498 to 856 ms), so end-to-end is 0.63x at 4 ranks: communication cost outweighs compute gains.
