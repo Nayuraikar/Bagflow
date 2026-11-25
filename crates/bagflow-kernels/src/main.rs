@@ -45,6 +45,40 @@ fn main() {
     }
     bench(&format!("openmp-{}", omp_threads()), reps, &mut base, &ref_res, &ref_out, &mut out, |o| openmp(arr, dl, fl, o));
 
+    #[cfg(has_metal)]
+    {
+        if let Some(m) = bagflow_kernels::metal::Metal::new(n) {
+            println!("\nMetal GPU: {}  (shared buffers: copy in/out is a memcpy, as in a straight port)", m.name);
+            let (mut up, mut gp, mut wl, mut dn, mut tot) = (f64::MAX, f64::MAX, f64::MAX, f64::MAX, f64::MAX);
+            let mut ok = true;
+            for rep in 0..=reps {
+                out.fill(0);
+                let t = Instant::now();
+                let (r, tm) = m.run(arr, dl, fl, &mut out);
+                let total = t.elapsed().as_secs_f64();
+                ok &= r == ref_res && out == ref_out;
+                if rep == 0 {
+                    continue; // warm-up run
+                }
+                up = up.min(tm.upload);
+                gp = gp.min(tm.gpu);
+                wl = wl.min(tm.wall);
+                dn = dn.min(tm.download);
+                tot = tot.min(total);
+            }
+            let nf = n as f64;
+            let line = |name: &str, s: f64| {
+                println!("{:<24}{:>10.2}{:>12.0}{:>9.1}{:>9.2}x", name, s * 1e3, nf / s / 1e6, nf * 10.0 / s / 1e9, base / s)
+            };
+            line("metal kernel (GPU)", gp);
+            line("metal kernel (wall)", wl);
+            line("metal + copy in/out", tot);
+            println!("copy in {:.2} ms, copy out + reduce {:.2} ms, output {}\n", up * 1e3, dn * 1e3, if ok { "identical" } else { "MISMATCH" });
+        } else {
+            println!("\nno Metal device found");
+        }
+    }
+
     let mut counts = vec![1usize];
     let mut t = 2;
     while t < max_t {

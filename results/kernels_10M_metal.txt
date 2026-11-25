@@ -1,0 +1,23 @@
+deadline-risk kernel: 10000168 bags, 8 logical cores, best of 10
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   14.12         708      7.1     1.00x  identical
+ilp (x4)                 13.12         762      7.6     1.08x  identical
+neon                      6.75        1481     14.8     2.09x  identical
+openmp-8                  4.30        2328     23.3     3.29x  identical
+
+Metal GPU: Apple M1  (shared buffers: copy in/out is a memcpy, as in a straight port)
+metal kernel (GPU)            3.45        2902     29.0     4.10x
+metal kernel (wall)           4.05        2470     24.7     3.49x
+metal + copy in/out           7.41        1349     13.5     1.90x
+copy in 3.01 ms, copy out + reduce 0.26 ms, output identical
+
+rayon-1+ilp              13.14         761      7.6     1.07x  identical
+rayon-1+neon              6.77        1478     14.8     2.09x  identical
+rayon-2+ilp               6.60        1515     15.1     2.14x  identical
+rayon-2+neon              3.41        2932     29.3     4.14x  identical
+rayon-4+ilp               3.34        2991     29.9     4.22x  identical
+rayon-4+neon              1.89        5289     52.9     7.47x  identical
+rayon-8+ilp               2.32        4308     43.1     6.08x  identical
+rayon-8+neon              2.03        4934     49.3     6.97x  identical

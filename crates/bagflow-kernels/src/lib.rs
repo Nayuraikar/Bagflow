@@ -287,3 +287,92 @@ mod tests {
         assert!(r.counts[0] > 0 && r.counts[1] > 0, "{:?}", r.counts);
     }
 }
+
+// ---------------- Metal (Apple GPU; macOS only) ----------------
+#[cfg(has_metal)]
+pub mod metal {
+    use super::Out;
+    use std::ffi::c_void;
+
+    extern "C" {
+        fn bf_metal_create(cap: usize, name: *mut u8, name_len: usize) -> *mut c_void;
+        fn bf_metal_destroy(p: *mut c_void);
+        fn bf_metal_upload(p: *mut c_void, arr: *const u32, dl: *const u32, fl: *const u8, n: usize) -> f64;
+        fn bf_metal_dispatch(p: *mut c_void, n: usize, wall_s: *mut f64) -> f64;
+        fn bf_metal_download(p: *mut c_void, n: usize, out: *mut u8, counts: *mut u64, slack_sum: *mut i64) -> f64;
+    }
+
+    /// Seconds spent in each stage of one run.
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct Timing {
+        pub upload: f64,   // host -> GPU-visible buffers
+        pub gpu: f64,      // kernel execution (GPU timestamps)
+        pub wall: f64,     // CPU-side: encode + launch + wait
+        pub download: f64, // buffers -> host, plus summing the per-group partials
+    }
+
+    pub struct Metal {
+        p: *mut c_void,
+        cap: usize,
+        pub name: String,
+    }
+
+    impl Metal {
+        pub fn new(cap: usize) -> Option<Metal> {
+            let mut buf = [0u8; 128];
+            let p = unsafe { bf_metal_create(cap, buf.as_mut_ptr(), buf.len()) };
+            if p.is_null() {
+                return None;
+            }
+            let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+            Some(Metal { p, cap, name: String::from_utf8_lossy(&buf[..end]).into_owned() })
+        }
+
+        pub fn run(&self, arr: &[u32], dl: &[u32], fl: &[u8], out: &mut [u8]) -> (Out, Timing) {
+            let n = arr.len();
+            assert!(n <= self.cap && dl.len() == n && fl.len() == n && out.len() == n);
+            let mut t = Timing::default();
+            let mut counts = [0u64; 3];
+            let mut sm = 0i64;
+            unsafe {
+                t.upload = bf_metal_upload(self.p, arr.as_ptr(), dl.as_ptr(), fl.as_ptr(), n);
+                t.gpu = bf_metal_dispatch(self.p, n, &mut t.wall);
+                t.download = bf_metal_download(self.p, n, out.as_mut_ptr(), counts.as_mut_ptr(), &mut sm);
+            }
+            (Out { counts, slack_sum: sm }, t)
+        }
+    }
+
+    impl Drop for Metal {
+        fn drop(&mut self) {
+            unsafe { bf_metal_destroy(self.p) }
+        }
+    }
+}
+
+#[cfg(all(test, has_metal))]
+mod metal_tests {
+    use super::*;
+    use bagflow_core::generator::{generate, GenConfig};
+
+    #[test]
+    fn metal_matches_scalar_on_awkward_lengths() {
+        let (_, b) = generate(&GenConfig { seed: 3, target_bags: 50_001 });
+        let m = match metal::Metal::new(b.len()) {
+            Some(m) => m,
+            None => {
+                eprintln!("no Metal device, skipping");
+                return;
+            }
+        };
+        for n in [0usize, 1, 7, 255, 256, 257, 1000, b.len()] {
+            let (a, d, f) = (&b.arrival_s[..n], &b.deadline_s[..n], &b.flags[..n]);
+            let mut ro = vec![0u8; n];
+            let r = scalar(a, d, f, &mut ro);
+            let mut o = vec![9u8; n];
+            let (g, _) = m.run(a, d, f, &mut o);
+            assert_eq!(g, r, "metal n={n}");
+            assert_eq!(o, ro, "metal classes n={n}");
+        }
+    }
+}
