@@ -56,7 +56,6 @@ fn main() {
             let st = std::process::Command::new(nvcc)
                 .args([
                     "-c", "-O3", "-std=c++17", "-Xcompiler", "-fPIC",
-                    "-gencode=arch=compute_60,code=sm_60",   // P100
                     "-gencode=arch=compute_75,code=sm_75",   // T4
                     "-gencode=arch=compute_75,code=compute_75",
                     cu, "-o", &obj,
