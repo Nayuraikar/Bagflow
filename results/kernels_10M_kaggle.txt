@@ -1,0 +1,26 @@
+deadline-risk kernel: 10000168 bags, 4 logical cores, best of 10 (Kaggle: Xeon @ 2.00GHz with AVX2, Tesla T4, CUDA 13.0)
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   26.31         380      3.8     1.00x  identical
+ilp (x4)                 30.50         328      3.3     0.86x  identical
+avx2                      7.91        1264     12.6     3.32x  identical
+openmp-4                  7.07        1415     14.2     3.72x  identical
+
+CUDA GPU: Tesla T4  (pageable host memory: copy in/out crosses PCIe)
+cuda naive atomics (GPU)           24.81         403      4.0     1.06x
+cuda naive atomics + PCIe          45.94         218      2.2     0.57x
+  copy in 18.94 ms, copy out 2.14 ms, output identical
+cuda warp shuffle (GPU)             0.83       12027    120.3    31.65x
+cuda warp shuffle + PCIe           21.61         463      4.6     1.22x
+  copy in 18.71 ms, copy out 2.02 ms, output identical
+cuda warp ptx (GPU)                 0.83       12017    120.2    31.62x
+cuda warp ptx + PCIe               21.80         459      4.6     1.21x
+  copy in 18.81 ms, copy out 2.08 ms, output identical
+
+rayon-1+ilp              33.57         298      3.0     0.78x  identical
+rayon-1+avx2              8.38        1193     11.9     3.14x  identical
+rayon-2+ilp              17.27         579      5.8     1.52x  identical
+rayon-2+avx2              4.59        2181     21.8     5.74x  identical
+rayon-4+ilp              15.24         656      6.6     1.73x  identical
+rayon-4+avx2              3.56        2810     28.1     7.39x  identical
