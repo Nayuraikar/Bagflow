@@ -1,0 +1,16 @@
+deadline-risk kernel: 10000168 bags, 8 logical cores, best of 10
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   14.11         709      7.1     1.00x  identical
+ilp (x4)                 13.06         766      7.7     1.08x  identical
+neon                      6.72        1489     14.9     2.10x  identical
+openmp-8                  5.12        1954     19.5     2.76x  identical
+rayon-1+ilp              14.79         676      6.8     0.95x  identical
+rayon-1+neon              7.62        1312     13.1     1.85x  identical
+rayon-2+ilp               7.44        1344     13.4     1.90x  identical
+rayon-2+neon              4.38        2283     22.8     3.22x  identical
+rayon-4+ilp               5.42        1844     18.4     2.60x  identical
+rayon-4+neon              3.81        2626     26.3     3.70x  identical
+rayon-8+ilp               6.85        1460     14.6     2.06x  identical
+rayon-8+neon              3.95        2531     25.3     3.57x  identical

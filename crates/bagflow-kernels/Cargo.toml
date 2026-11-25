@@ -1,0 +1,12 @@
+[package]
+name = "bagflow-kernels"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+bagflow-core = { path = "../bagflow-core" }
+rayon = { workspace = true }
+
+[build-dependencies]
+cc = "1"
