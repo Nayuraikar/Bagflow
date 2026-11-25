@@ -1,0 +1,11 @@
+mode     ranks    load ms  compute ms  reduce ms   compute   end-to-end  result
+read         1       84.2       74.05      0.000     1.00x        1.00x  identical
+read         2       56.7       43.84      0.003     1.69x        1.57x  identical
+read         4       36.1       18.98      0.002     3.90x        2.87x  identical
+read         8       30.0       15.63      0.017     4.74x        3.47x  identical
+scatter      1      348.6       74.09      0.000     1.00x        1.00x  identical
+scatter      2      139.7       37.14      0.003     1.99x        2.39x  identical
+scatter      4      147.4       21.11      0.002     3.51x        2.51x  identical
+scatter      8      278.3       17.35      0.006     4.27x        1.43x  identical
+
+bags: on-track / at-risk / critical / slack sum = 35861889 9721115 4417095 139195725044

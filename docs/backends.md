@@ -17,3 +17,9 @@ Three CUDA variants of the risk kernel: naive (3 global atomics per thread), war
 Findings: naive atomics 24.8 ms vs warp shuffle 0.83 ms (30x, atomic contention). PTX = warp shuffle speed (compiler emits the same code). Kernel ~120 GB/s (about 40% of T4 peak).
 Transfer: pageable copy-in 18.7 ms (~4.8 GB/s) dwarfs the 0.83 ms kernel; end-to-end 21.6 ms is only 1.22x over scalar and about 6x slower than rayon-4+avx2 (3.56 ms). On the M1 the copy-in was 3.0 ms (unified memory).
 sm_60 dropped from the build because CUDA 13 no longer supports Pascal. Results: results/kernels_10M_kaggle.txt. Speedups are relative to the scalar row of the same file.
+
+# MPI (Phase 6d)
+kernels/mpi/risk_mpi.cpp: same risk formula, one thread per rank, bags split into contiguous slices. Two distribution modes: `read` (each rank reads its slice of the .bin file) and `scatter` (rank 0 reads all, MPI_Scatterv). Results combined with MPI_Reduce (3 x int64). Reports load, compute (best of 10, slowest rank) and reduce times.
+Correctness: every rank count gives identical counts and slack sum; the 10M result matches the Rust scalar answer (7172190 1944284 883694, slack 27835824747).
+Findings (M1, 50M): compute 3.9x at 4 ranks, 4.7x at 8 (memory-bound). Reduce is negligible (24 bytes). Scatter load (278 ms at 8 ranks) dwarfs compute (17 ms): end-to-end only 1.43x, versus 3.47x in read mode.
+Results: results/mpi_10M.txt, results/mpi_50M.txt (Mac M1). Kaggle run to follow: results/mpi_50M_kaggle.txt (4 cores).
