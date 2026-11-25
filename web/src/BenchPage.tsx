@@ -23,13 +23,13 @@ const mpi = [
 ];
 
 const axis = { stroke: "#94a3b8" };
-const tip = { contentStyle: { background: "#0f172a", border: "1px solid #334155" } };
+const tip = { contentStyle: { background: "#fff", border: "1px solid #e2e8f0" } };
 
 function Hbar({ data, color }: { data: { name: string; ms: number }[]; color: string }) {
   return (
     <ResponsiveContainer width="100%" height={data.length * 34 + 40}>
       <BarChart data={data} layout="vertical" margin={{ left: 110 }}>
-        <CartesianGrid stroke="#1e293b" />
+        <CartesianGrid stroke="#e2e8f0" />
         <XAxis type="number" {...axis} unit=" ms" />
         <YAxis type="category" dataKey="name" {...axis} width={140} />
         <Tooltip {...tip} />
@@ -49,7 +49,7 @@ export default function BenchPage() {
         <h3>Where the GPU time goes: unified memory vs PCIe</h3>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={transfer} layout="vertical" margin={{ left: 130 }}>
-            <CartesianGrid stroke="#1e293b" />
+            <CartesianGrid stroke="#e2e8f0" />
             <XAxis type="number" {...axis} unit=" ms" />
             <YAxis type="category" dataKey="name" {...axis} width={170} />
             <Tooltip {...tip} /><Legend />
@@ -63,7 +63,7 @@ export default function BenchPage() {
         <h3>MPI end-to-end speedup, 50M bags (read = each rank reads its slice; scatter = rank 0 sends)</h3>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={mpi}>
-            <CartesianGrid stroke="#1e293b" />
+            <CartesianGrid stroke="#e2e8f0" />
             <XAxis dataKey="ranks" {...axis} />
             <YAxis {...axis} unit="x" />
             <Tooltip {...tip} /><Legend />

@@ -30,3 +30,7 @@ crates/bagflow-api: Axum 0.7 server on 127.0.0.1:3001. Generates the 250k datase
 web/: three tabs. Replay (Phase 2 Pixi page), Scenarios (any scenario x routing x policy x capacity, compare 4 routings), Benchmark lab (kernel, transfer and MPI charts; numbers embedded in BenchPage.tsx from the result files).
 Verified: API Normal/dijkstra/fcfs gives 3.697% delayed, identical to the CLI tables.
 Not included: WebSocket live streaming, click-to-fail conveyor, side-by-side synced replays, ParticleContainer level-of-detail.
+
+# Journey tab (Phase 7c)
+web/src/journeySim.ts: deterministic multi-stage queue model (check-in, screening, sorter, belts, per-flight loading with departure deadlines, flight, unloading). Same random bags for every worker count, so serial and parallel runs compare directly. web/src/JourneyPage.tsx draws it on a canvas and narrates each step from the followed bag's phase.
+It is an illustrative model with the engine's structure, not the Rust engine's event log. Light theme applied app-wide (light.css).

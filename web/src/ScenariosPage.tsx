@@ -90,10 +90,10 @@ export default function ScenariosPage() {
           <h3>Delayed % by routing ({cmp[0].scenario}, {cmp[0].policy}, {cmp[0].pct}% capacity)</h3>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={cmp.map((c) => ({ routing: c.routing, delayed: Number(c.delayed_pct.toFixed(2)), tight: Number(c.tight_delayed_pct.toFixed(2)) }))}>
-              <CartesianGrid stroke="#1e293b" />
+              <CartesianGrid stroke="#e2e8f0" />
               <XAxis dataKey="routing" stroke="#94a3b8" />
               <YAxis stroke="#94a3b8" unit="%" />
-              <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #334155" }} />
+              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0" }} />
               <Bar dataKey="delayed" name="delayed %" fill="#ef4444" />
               <Bar dataKey="tight" name="tight delayed %" fill="#f59e0b" />
             </BarChart>
