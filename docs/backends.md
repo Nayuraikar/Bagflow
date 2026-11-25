@@ -34,3 +34,7 @@ Not included: WebSocket live streaming, click-to-fail conveyor, side-by-side syn
 # Journey tab (Phase 7c)
 web/src/journeySim.ts: deterministic multi-stage queue model (check-in, screening, sorter, belts, per-flight loading with departure deadlines, flight, unloading). Same random bags for every worker count, so serial and parallel runs compare directly. web/src/JourneyPage.tsx draws it on a canvas and narrates each step from the followed bag's phase.
 It is an illustrative model with the engine's structure, not the Rust engine's event log. Light theme applied app-wide (light.css).
+
+# Scale tab (Phase 7d)
+web/src/ScalePage.tsx: per-minute fluid model (check-in, screening, sorter, loading; 12/14/16/10 bags/min per worker) for up to 50M bags and 4096 workers; on-time share by first-in-first-out matching with a 150 min window. Particles carry many bags each (1 dot = N/4000 bags). Backend race uses measured throughput from results/kernels_10M_metal.txt and kernels_10M_kaggle.txt (linear extrapolation, two machines).
+Not the Rust engine: that processes about 240k bags/s sequentially, so million-bag runs happen in the CLI. Pixi replay page is lazy-loaded (code split).
