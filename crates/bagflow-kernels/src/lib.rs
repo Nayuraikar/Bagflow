@@ -376,3 +376,95 @@ mod metal_tests {
         }
     }
 }
+
+// ---------------- CUDA (NVIDIA GPU; Linux with nvcc only) ----------------
+#[cfg(has_cuda)]
+pub mod cuda {
+    use super::Out;
+    use std::ffi::c_void;
+
+    extern "C" {
+        fn bf_cuda_create(cap: usize, name: *mut u8, name_len: usize) -> *mut c_void;
+        fn bf_cuda_destroy(p: *mut c_void);
+        fn bf_cuda_upload(p: *mut c_void, arr: *const u32, dl: *const u32, fl: *const u8, n: usize) -> f64;
+        fn bf_cuda_run(p: *mut c_void, variant: i32, n: usize, wall_s: *mut f64) -> f64;
+        fn bf_cuda_download(p: *mut c_void, n: usize, out: *mut u8, counts: *mut u64, slack_sum: *mut i64) -> f64;
+    }
+
+    pub const VARIANTS: [&str; 3] = ["naive atomics", "warp shuffle", "warp ptx"];
+
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct Timing {
+        pub upload: f64,   // PCIe host -> device
+        pub gpu: f64,      // kernel, CUDA events
+        pub wall: f64,     // CPU-side launch + wait
+        pub download: f64, // PCIe device -> host
+    }
+
+    pub struct Cuda {
+        p: *mut c_void,
+        cap: usize,
+        pub name: String,
+    }
+
+    impl Cuda {
+        pub fn new(cap: usize) -> Option<Cuda> {
+            let mut buf = [0u8; 128];
+            let p = unsafe { bf_cuda_create(cap, buf.as_mut_ptr(), buf.len()) };
+            if p.is_null() {
+                return None;
+            }
+            let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+            Some(Cuda { p, cap, name: String::from_utf8_lossy(&buf[..end]).into_owned() })
+        }
+
+        pub fn run(&self, variant: i32, arr: &[u32], dl: &[u32], fl: &[u8], out: &mut [u8]) -> (Out, Timing) {
+            let n = arr.len();
+            assert!(n <= self.cap && dl.len() == n && fl.len() == n && out.len() == n);
+            let mut t = Timing::default();
+            let mut counts = [0u64; 3];
+            let mut sm = 0i64;
+            unsafe {
+                t.upload = bf_cuda_upload(self.p, arr.as_ptr(), dl.as_ptr(), fl.as_ptr(), n);
+                t.gpu = bf_cuda_run(self.p, variant, n, &mut t.wall);
+                t.download = bf_cuda_download(self.p, n, out.as_mut_ptr(), counts.as_mut_ptr(), &mut sm);
+            }
+            (Out { counts, slack_sum: sm }, t)
+        }
+    }
+
+    impl Drop for Cuda {
+        fn drop(&mut self) {
+            unsafe { bf_cuda_destroy(self.p) }
+        }
+    }
+}
+
+#[cfg(all(test, has_cuda))]
+mod cuda_tests {
+    use super::*;
+    use bagflow_core::generator::{generate, GenConfig};
+
+    #[test]
+    fn cuda_variants_match_scalar_on_awkward_lengths() {
+        let (_, b) = generate(&GenConfig { seed: 3, target_bags: 50_001 });
+        let g = match cuda::Cuda::new(b.len()) {
+            Some(g) => g,
+            None => {
+                eprintln!("no CUDA device, skipping");
+                return;
+            }
+        };
+        for n in [0usize, 1, 31, 32, 33, 255, 256, 257, 1000, b.len()] {
+            let (a, d, f) = (&b.arrival_s[..n], &b.deadline_s[..n], &b.flags[..n]);
+            let mut ro = vec![0u8; n];
+            let r = scalar(a, d, f, &mut ro);
+            for v in 0..3 {
+                let mut o = vec![9u8; n];
+                let (got, _) = g.run(v, a, d, f, &mut o);
+                assert_eq!(got, r, "{} n={n}", cuda::VARIANTS[v as usize]);
+                assert_eq!(o, ro, "{} classes n={n}", cuda::VARIANTS[v as usize]);
+            }
+        }
+    }
+}

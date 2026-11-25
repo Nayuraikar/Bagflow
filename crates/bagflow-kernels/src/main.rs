@@ -79,6 +79,41 @@ fn main() {
         }
     }
 
+    #[cfg(has_cuda)]
+    {
+        if let Some(g) = bagflow_kernels::cuda::Cuda::new(n) {
+            println!("\nCUDA GPU: {}  (pageable host memory: copy in/out crosses PCIe)", g.name);
+            let nf = n as f64;
+            let line = |name: &str, s: f64| {
+                println!("{:<30}{:>10.2}{:>12.0}{:>9.1}{:>9.2}x", name, s * 1e3, nf / s / 1e6, nf * 10.0 / s / 1e9, base / s)
+            };
+            for (vi, vname) in bagflow_kernels::cuda::VARIANTS.iter().enumerate() {
+                let (mut up, mut gp, mut dn, mut tot) = (f64::MAX, f64::MAX, f64::MAX, f64::MAX);
+                let mut ok = true;
+                for rep in 0..=reps {
+                    out.fill(0);
+                    let t = Instant::now();
+                    let (r, tm) = g.run(vi as i32, arr, dl, fl, &mut out);
+                    let total = t.elapsed().as_secs_f64();
+                    ok &= r == ref_res && out == ref_out;
+                    if rep == 0 {
+                        continue; // warm-up
+                    }
+                    up = up.min(tm.upload);
+                    gp = gp.min(tm.gpu);
+                    dn = dn.min(tm.download);
+                    tot = tot.min(total);
+                }
+                line(&format!("cuda {} (GPU)", vname), gp);
+                line(&format!("cuda {} + PCIe", vname), tot);
+                println!("  copy in {:.2} ms, copy out {:.2} ms, output {}", up * 1e3, dn * 1e3, if ok { "identical" } else { "MISMATCH" });
+            }
+            println!();
+        } else {
+            println!("\nno CUDA device found");
+        }
+    }
+
     let mut counts = vec![1usize];
     let mut t = 2;
     while t < max_t {
