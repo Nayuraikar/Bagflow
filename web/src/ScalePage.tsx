@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./scale.css";
+import Arena from "./Arena";
 
 const BINS = 1440, H = BINS + 720, LAG = 2, WINDOW = 150;
 const RATE = [12, 14, 16, 10]; // bags per minute per worker: check-in, screening, sorter, loading
@@ -38,14 +39,6 @@ function model(N: number, W: number) {
 const fmt = (n: number) => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : Math.round(n).toString();
 const dur = (min: number) => min < 0 ? "never in this window" : min < 120 ? Math.round(min) + " min" : min < 2880 ? (min / 60).toFixed(1) + " h" : (min / 1440).toFixed(min > 1440 * 400 ? 0 : 1) + " days";
 const clock = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(Math.floor(m) % 60).padStart(2, "0")}`;
-
-// measured throughput (M bags/s) from results/*.txt, 10M-bag runs
-const RACE = [
-  { n: "Scalar (1 core)", r: 708, m: "M1", c: "#94a3b8" }, { n: "ILP x4", r: 762, m: "M1", c: "#94a3b8" },
-  { n: "NEON SIMD", r: 1481, m: "M1", c: "#38bdf8" }, { n: "OpenMP 8 threads", r: 2328, m: "M1", c: "#38bdf8" },
-  { n: "Rayon 4 threads + NEON", r: 5289, m: "M1", c: "#6366f1" }, { n: "Metal GPU + copy", r: 1349, m: "M1", c: "#a78bfa" },
-  { n: "CUDA warp kernel only", r: 12027, m: "T4", c: "#10b981" }, { n: "CUDA warp + PCIe copy", r: 463, m: "T4", c: "#f43f5e" },
-];
 
 type P = [number, number];
 const NODES: P[] = [[130, 300], [340, 190], [560, 330], [770, 210], [900, 300]];
@@ -178,22 +171,7 @@ export default function ScalePage() {
         <div><small>Peak queue (check-in)</small><b>{fmt(Math.max(...par.qs[0]))}</b><em>serial: {fmt(Math.max(...ser.qs[0]))}</em></div>
       </section>
 
-      <section className="sc-race">
-        <h2>The digital check: scoring {fmt(N)} bags on every backend</h2>
-        <p>Deadline-risk classification of the whole dataset, using throughput measured in this project (10M-bag runs).</p>
-        {RACE.map((r) => {
-          const ms = (N / (r.r * 1e6)) * 1000, best = (N / (12027e6)) * 1000;
-          return (
-            <div className="sc-row" key={r.n}>
-              <span>{r.n} <em>{r.m}</em></span>
-              <div className="sc-bar"><i style={{ width: Math.max(2, 100 * Math.log10(1 + ms) / Math.log10(1 + (N / 463e6) * 1000 * 1.05)) + "%", background: r.c }} /></div>
-              <b>{ms < 1000 ? ms.toFixed(ms < 10 ? 1 : 0) + " ms" : (ms / 1000).toFixed(1) + " s"}</b>
-              <small>{(ms / best).toFixed(0)}x of best</small>
-            </div>
-          );
-        })}
-        <p className="sc-note">The GPU kernel is fastest, but with the PCIe copy it is the slowest: moving data costs more than computing on it. Bars use a log scale; times are linear extrapolations of measured throughput, and the two machines (M1 and T4) are different.</p>
-      </section>
+      <Arena N={N} />
     </div>
   );
 }

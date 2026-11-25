@@ -38,3 +38,6 @@ It is an illustrative model with the engine's structure, not the Rust engine's e
 # Scale tab (Phase 7d)
 web/src/ScalePage.tsx: per-minute fluid model (check-in, screening, sorter, loading; 12/14/16/10 bags/min per worker) for up to 50M bags and 4096 workers; on-time share by first-in-first-out matching with a 150 min window. Particles carry many bags each (1 dot = N/4000 bags). Backend race uses measured throughput from results/kernels_10M_metal.txt and kernels_10M_kaggle.txt (linear extrapolation, two machines).
 Not the Rust engine: that processes about 240k bags/s sequentially, so million-bag runs happen in the CLI. Pixi replay page is lazy-loaded (code split).
+
+# Parallel arena (Phase 7e)
+web/src/Arena.tsx: animated race of every backend (scalar, ILP, NEON/AVX2, OpenMP, Rayon, Rayon+SIMD, Metal, CUDA naive/warp/PTX, MPI read/scatter) with copy / compute / copy-back phases, on Apple M1 and Kaggle T4 numbers (per 10M bags from results/*.txt, scaled linearly). Optional what-if multiplier (1 to 100k runs) and copy-once mode show when GPU transfer cost amortises.
