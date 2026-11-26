@@ -44,3 +44,8 @@ web/src/Arena.tsx: animated race of every backend (scalar, ILP, NEON/AVX2, OpenM
 
 # Visual redesign (Phase 9)
 Sky hero with wavy edge, condensed headline (Anton), script accent (Caveat), booking card with tabs, blue statistics band, how-it-works tiles, cutaway aircraft strip with scene capsules and live bag hold (web/src/PlaneArt.tsx, Landing.tsx, skin.css). Scene canvas loop guarded so a draw error no longer freezes the clock.
+
+# Airport tab, realistic staffing, re-planning window (phases 8, 8b, 8c; committed with Phase 9)
+Airport tab: in-browser seeded generator (900 departures/day, 1 day / 30 days / 1 year), dashboard, direct or via-hub booking, boarding pass, scene-by-scene movie (check-in, security, sorting, loading, flight, hub transfer, carousel).
+Staffing: baseline workers sized so each stage takes 15-45 min; "your staffing" defaults to 2x baseline.
+Compute panel: 10 backends scored on a 5-minute re-planning window using measured throughput; the backend choice does not change the animation (that needs the Rust engine driving the movie).
