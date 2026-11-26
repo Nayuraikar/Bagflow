@@ -1,4 +1,5 @@
 //! Phase 4 engine: general layered graph, routing strategies, queue policies.
+use crate::collect::{CollectOptions, Collected, Collector};
 use crate::events::{EventKind, ScheduledEvent};
 use crate::soa::BagSoA;
 use crate::types::*;
@@ -55,6 +56,14 @@ fn stage(kind: NodeKind) -> u8 {
         NodeKind::Conveyor | NodeKind::Sorter | NodeKind::Transfer => 3,
         NodeKind::Loading => 4,
     }
+}
+
+/// Extra inspection time (ms) this bag spends at this node; `None` if it is not held.
+/// It is part of the service on the same server, so it has no separate start time.
+pub fn inspection_ms(seed: u64, bag: u32, kind: NodeKind) -> Option<f64> {
+    let st = stage(kind);
+    (kind == NodeKind::Screening && u01(seed, bag, st, 2) < HOLD_PROB)
+        .then(|| lognormal(seed, bag, st, 3, HOLD_MEAN_MS))
 }
 
 type Adj = Vec<Vec<(u16, u32)>>;
@@ -141,6 +150,8 @@ struct G<'a> {
     cap: Vec<u16>,
     edge_up: Vec<bool>,
     eidx: Vec<Vec<usize>>,
+    done: u64,
+    obs: Option<Collector>, // observation only; never read by the simulation
 }
 
 impl<'a> G<'a> {
@@ -153,8 +164,8 @@ impl<'a> G<'a> {
         let nd = &self.nodes[node];
         let st = stage(nd.kind);
         let mut d = lognormal(self.seed, bag, st, 0, nd.mean_service_ms as f64);
-        if nd.kind == NodeKind::Screening && u01(self.seed, bag, st, 2) < HOLD_PROB {
-            d += lognormal(self.seed, bag, st, 3, HOLD_MEAN_MS); // extra inspection time
+        if let Some(hold) = inspection_ms(self.seed, bag, nd.kind) {
+            d += hold;
         }
         (d as u64).max(1).min(u32::MAX as u64) as u32
     }
@@ -240,9 +251,26 @@ impl<'a> G<'a> {
         }
     }
 
+    /// Record every sample due before the clock moves to `t`.
+    fn sample_before(&mut self, t: u64) {
+        while let Some(at) = self.obs.as_ref().and_then(|c| c.due_before(t)) {
+            self.sample_at(at);
+        }
+    }
+
+    fn sample_at(&mut self, at: u64) {
+        let (queues, busy, cap, arrivals) = (&self.queues, &self.busy, &self.cap, &self.arrivals);
+        if let Some(c) = &mut self.obs {
+            c.sample(at, |n| (queues[n].len() as u32, busy[n], cap[n], arrivals[n]));
+        }
+    }
+
     fn arrive(&mut self, t: u64, bag: u32, node: u16) {
         let n = node as usize;
         self.arrivals[n] += 1;
+        if let Some(c) = &mut self.obs {
+            c.arrive(t, bag, n);
+        }
         let dur = self.dur_ms(bag, n);
         if self.busy[n] < self.cap[n] {
             self.start(t, bag, node, dur, t);
@@ -262,12 +290,18 @@ impl<'a> G<'a> {
         self.busy[n] += 1;
         self.wait_ms[n] += t - enq;
         self.busy_ms[n] += dur as u64;
+        if let Some(c) = &mut self.obs {
+            c.start(t, bag, n, dur, t - enq);
+        }
         self.push(t + dur as u64, EventKind::ServiceComplete, bag, node);
     }
 
     fn complete(&mut self, t: u64, bag: u32, node: u16) {
         let n = node as usize;
         self.busy[n] -= 1;
+        if let Some(c) = &mut self.obs {
+            c.complete(n);
+        }
         if self.busy[n] < self.cap[n] {
             if let Some(Reverse((_, _, nb, ndur, enq))) = self.queues[n].pop() {
                 self.start(t, nb, node, ndur, enq);
@@ -275,9 +309,14 @@ impl<'a> G<'a> {
         }
         if self.nodes[n].kind == NodeKind::Loading {
             self.finish[bag as usize] = t;
+            self.done += 1;
             return;
         }
         let (to, travel) = self.next_hop(t, bag, n);
+        if let Some(c) = &mut self.obs {
+            let i = self.out[n].iter().position(|x| x.0 == to).expect("hop uses a known edge");
+            c.edge(self.eidx[n][i]);
+        }
         self.push(t + travel as u64, EventKind::TransitComplete, bag, to);
     }
 }
@@ -303,6 +342,26 @@ pub fn run(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, polic
 }
 
 pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage]) -> RunStats {
+    simulate(bags, nodes, edges, strat, policy, seed, outages, None, None).0
+}
+
+/// Progress is reported every this many events, and once at the end.
+const PROGRESS_EVERY: u64 = 1 << 16;
+
+/// Called with (bags finished, total bags).
+pub type Progress<'a> = &'a mut dyn FnMut(u64, u64);
+
+/// `run_with` plus optional observation. The `RunStats` are the same as `run_with` returns.
+#[allow(clippy::too_many_arguments)]
+pub fn run_collected(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], opts: CollectOptions, progress: Option<Progress>) -> (RunStats, Collected) {
+    let first_ms = bags.arrival_s.iter().min().map_or(0, |&a| a as u64 * 1000);
+    let obs = Collector::new(opts, bags.len(), first_ms, nodes, edges);
+    let (stats, obs) = simulate(bags, nodes, edges, strat, policy, seed, outages, Some(obs), progress);
+    (stats, obs.expect("collector was passed in").finish())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn simulate(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], obs: Option<Collector>, mut progress: Option<Progress>) -> (RunStats, Option<Collector>) {
     let nn = nodes.len();
     let (out, _) = adjacency(nn, edges);
     let (loaders, dist) = dijkstra_table(nodes, edges);
@@ -333,6 +392,8 @@ pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, 
         cap: nodes.iter().map(|x| x.servers).collect(),
         edge_up: vec![true; edges.len()],
         eidx,
+        done: 0,
+        obs,
     };
     for i in 0..bags.len() {
         g.push(bags.arrival_s[i] as u64 * 1000, EventKind::Arrival, i as u32, 0);
@@ -343,7 +404,9 @@ pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, 
         g.push(o.end_s as u64 * 1000, EventKind::Repair, i as u32, nd);
     }
     let mut end_ms = 0;
+    let mut events = 0u64;
     while let Some(Reverse(ev)) = g.heap.pop() {
+        g.sample_before(ev.time_ms);
         end_ms = ev.time_ms;
         match ev.kind {
             EventKind::Arrival => g.arrive(ev.time_ms, ev.bag_id, 0),
@@ -352,6 +415,16 @@ pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, 
             EventKind::Failure => g.outage(ev.time_ms, ev.bag_id as usize, true, outages),
             EventKind::Repair => g.outage(ev.time_ms, ev.bag_id as usize, false, outages),
         }
+        events += 1;
+        if events.is_multiple_of(PROGRESS_EVERY) {
+            if let Some(p) = progress.as_mut() {
+                p(g.done, bags.len() as u64);
+            }
+        }
+    }
+    g.sample_at(end_ms); // closing sample: final state
+    if let Some(p) = progress.as_mut() {
+        p(g.done, bags.len() as u64);
     }
 
     let (mut loaded, mut delayed, mut unfinished, mut tight_total, mut tight_delayed) = (0u64, 0u64, 0u64, 0u64, 0u64);
@@ -395,7 +468,7 @@ pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, 
             h = h.wrapping_mul(0x100000001b3);
         }
     }
-    RunStats {
+    let stats = RunStats {
         n: bags.len(),
         loaded,
         delayed,
@@ -409,7 +482,8 @@ pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, 
         arrivals: g.arrivals,
         max_queue: g.max_q,
         checksum: h,
-    }
+    };
+    (stats, g.obs)
 }
 
 #[cfg(test)]

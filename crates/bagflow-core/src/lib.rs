@@ -1,3 +1,4 @@
+pub mod collect;
 pub mod engine;
 pub mod engine2;
 pub mod events;
