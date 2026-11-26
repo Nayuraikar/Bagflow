@@ -1,6 +1,8 @@
 //! Phase 6: batch deadline-risk kernel in several backends. All must give identical results.
 use rayon::prelude::*;
 
+pub mod runner;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Out {
     pub counts: [u64; 3], // [on-track, at-risk, critical]

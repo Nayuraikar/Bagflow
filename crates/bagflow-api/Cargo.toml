@@ -5,7 +5,14 @@ edition = "2021"
 
 [dependencies]
 bagflow-core = { path = "../bagflow-core" }
+bagflow-kernels = { path = "../bagflow-kernels" }
+rayon = { workspace = true }
 axum = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.5", features = ["cors"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
