@@ -1,0 +1,16 @@
+/* Scoped: these rules apply only inside the Concept demos wrapper. */
+.legacy-demo {
+  .app h1 { font-size: 20px; margin: 0 0 12px; }
+  .stage canvas { width: 100%; height: auto; border-radius: 10px; display: block; }
+  .controls { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .controls input[type="range"] { flex: 1; }
+  .controls button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .controls button.on { background: #2563eb; border-color: #2563eb; }
+  .clock { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
+  .hud { display: flex; gap: 20px; margin-top: 12px; font-size: 14px; }
+  .hud .ok { color: #22c55e; }
+  .hud .bad { color: #ef4444; }
+  .app table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
+  .app th, .app td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #1e293b; }
+  .app th:first-child, .app td:first-child { text-align: left; }
+}
