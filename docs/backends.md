@@ -41,3 +41,6 @@ Not the Rust engine: that processes about 240k bags/s sequentially, so million-b
 
 # Parallel arena (Phase 7e)
 web/src/Arena.tsx: animated race of every backend (scalar, ILP, NEON/AVX2, OpenMP, Rayon, Rayon+SIMD, Metal, CUDA naive/warp/PTX, MPI read/scatter) with copy / compute / copy-back phases, on Apple M1 and Kaggle T4 numbers (per 10M bags from results/*.txt, scaled linearly). Optional what-if multiplier (1 to 100k runs) and copy-once mode show when GPU transfer cost amortises.
+
+# Visual redesign (Phase 9)
+Sky hero with wavy edge, condensed headline (Anton), script accent (Caveat), booking card with tabs, blue statistics band, how-it-works tiles, cutaway aircraft strip with scene capsules and live bag hold (web/src/PlaneArt.tsx, Landing.tsx, skin.css). Scene canvas loop guarded so a draw error no longer freezes the clock.
