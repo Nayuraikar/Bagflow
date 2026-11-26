@@ -1,16 +1,20 @@
-//! One simulation run: validated config, execution with collection on, and the views
-//! served from a retained run.
+//! One simulation run: validated config, execution of the measured pipeline with
+//! collection on, and the views served from a retained run.
 
+use crate::bench::{self, logical_cores};
 use crate::error::{ApiError, ApiResult};
+use crate::pipeline;
+use bagflow_core::aggregate::{self, Aggregate};
 use bagflow_core::collect::{CollectOptions, Collected, Hop, WAIT_BOUNDS_MS};
 use bagflow_core::engine2::{inspection_ms, run_collected, Outage, Policy, RunStats, Strategy, Target};
-use bagflow_core::generator::{generate_par, GenConfig};
 use bagflow_core::network::airport_network;
 use bagflow_core::scenarios::{build, ALL};
 use bagflow_core::soa::BagSoA;
 use bagflow_core::types::*;
+use bagflow_kernels::runner::Backend;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::Instant;
 
 pub const SEED: u64 = 42;
 pub const SAMPLE_INTERVAL_MS: u64 = 60_000;
@@ -38,6 +42,10 @@ pub struct SimConfig {
     pub capacity_pct: u32,
     pub server_multiplier: u32,
     pub bag_count: u64,
+    /// Threads for the parallel pipeline phases. They never change the simulation result.
+    pub threads: usize,
+    /// Backend for the batch deadline-risk phase.
+    pub classify_backend: String,
 }
 
 impl Default for SimConfig {
@@ -49,6 +57,8 @@ impl Default for SimConfig {
             capacity_pct: 100,
             server_multiplier: 1,
             bag_count: 250_000,
+            threads: logical_cores(),
+            classify_backend: pipeline::default_classify_backend(),
         }
     }
 }
@@ -84,7 +94,14 @@ impl SimConfig {
         self.parsed()?;
         check_range("bag_count", self.bag_count, BAG_COUNT_RANGE)?;
         check_range("capacity_pct", self.capacity_pct, CAPACITY_PCT_RANGE)?;
-        check_range("server_multiplier", self.server_multiplier, MULTIPLIER_RANGE)
+        check_range("server_multiplier", self.server_multiplier, MULTIPLIER_RANGE)?;
+        check_range("threads", self.threads, bench::THREADS_RANGE)?;
+        self.backend().map(|_| ())
+    }
+
+    /// The classification backend, if it can run on this machine. May probe a GPU.
+    pub fn backend(&self) -> ApiResult<Backend> {
+        bench::available_backend(&self.classify_backend)
     }
 }
 
@@ -150,21 +167,26 @@ pub struct Finished {
 /// Run one validated config. `progress` receives (phase, done, total).
 pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)) -> Result<Finished, String> {
     let (sc, st, po) = cfg.parsed().map_err(|e| e.message)?;
-    progress("generating", 0, cfg.bag_count);
-    let threads = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(1);
-    let (flights, base) = generate_par(&GenConfig { seed: SEED, target_bags: cfg.bag_count as usize }, threads);
+    let backend = cfg.backend().map_err(|e| e.message)?;
 
+    progress("generating", 0, cfg.bag_count);
+    let (flights, base, dataset_checksum, generate) = pipeline::generate_phase(cfg.bag_count as usize, cfg.threads)?;
+
+    let t = Instant::now();
     let (mut nodes, edges) = airport_network(cfg.server_multiplier as u16);
     scale_servers(&mut nodes, cfg.capacity_pct);
     let setup = build(sc, &base, &nodes, &edges, SEED);
     let original_flight = (setup.bags.flight[..base.len()] != base.flight[..]).then(|| base.flight.clone());
     let generated = base.len();
-    let dataset_checksum = base.checksum();
     drop(base);
+    let scenario_setup_ms = t.elapsed().as_secs_f64() * 1e3;
 
     let total = setup.bags.len() as u64;
+    progress("classifying", 0, total);
+    let classify = pipeline::classify_phase(&setup.bags, backend, cfg.threads)?;
+
     progress("simulating", 0, total);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let mut on_progress = |done: u64, total: u64| progress("simulating", done, total);
     let (stats, collected) = run_collected(
         &setup.bags,
@@ -179,7 +201,17 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
     );
     let wall_s = started.elapsed().as_secs_f64();
 
+    progress("aggregating", total, total);
+    let history = collected.history.as_ref().expect("history collection is on");
+    let input = aggregate::Input { history, bags: &setup.bags, nodes: &setup.nodes };
+    let (aggregated, aggregation) = pipeline::aggregate_phase(input, cfg.threads)?;
+    let aggregate_matches_engine = pipeline::matches_engine(&aggregated, &stats, &collected);
+    if !aggregate_matches_engine {
+        return Err("the aggregation of the bag histories does not match the engine totals".into());
+    }
+
     progress("summarising", total, total);
+    let t = Instant::now();
     let status = sample_statuses(&collected, setup.nodes.len());
     let data = SimData {
         bags: setup.bags,
@@ -200,7 +232,20 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
         "flights": data.flights.len(),
         "checksum": format!("{dataset_checksum:016x}"),
     });
-    let result = data.result(dataset, wall_s);
+    let mut result = data.result(dataset, wall_s, &aggregated);
+    let report = pipeline::Report {
+        threads: cfg.threads,
+        bags_generated: generated,
+        bags_simulated: data.bags.len(),
+        generate,
+        classify,
+        simulate_ms: wall_s * 1e3,
+        aggregate: aggregation,
+        aggregate_matches_engine,
+        scenario_setup_ms,
+        summarise_ms: t.elapsed().as_secs_f64() * 1e3,
+    };
+    result["pipeline"] = report.json();
     Ok(Finished { data, result })
 }
 
@@ -607,11 +652,21 @@ impl SimData {
             .collect()
     }
 
-    fn result(&self, dataset: Value, wall_s: f64) -> Value {
+    /// What an aggregation of this run's bag histories reads.
+    pub fn aggregate_input(&self) -> aggregate::Input<'_> {
+        let history = self.collected.history.as_ref().expect("history collection is on");
+        aggregate::Input { history, bags: &self.bags, nodes: &self.nodes }
+    }
+
+    fn result(&self, dataset: Value, wall_s: f64, aggregated: &Aggregate) -> Value {
         let s = &self.stats;
         let n = s.n.max(1) as f64;
         let total_wait_s: f64 = s.avg_wait_s.iter().zip(&s.arrivals).map(|(w, &a)| w * a as f64).sum();
-        let nodes = self.node_rows();
+        let mut nodes = self.node_rows();
+        for (row, a) in nodes.iter_mut().zip(&aggregated.nodes) {
+            row["max_wait_ms"] = json!(a.max_wait_ms);
+            row["total_service_ms"] = json!(a.service_ms);
+        }
         let congested = nodes.iter().filter(|x| x["status"] == "congested").count();
         let series = self.collected.series.as_ref().expect("series collection is on");
         json!({

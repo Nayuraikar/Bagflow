@@ -16,6 +16,15 @@ const MAX_THREAD_COUNTS: usize = 8;
 /// Bytes of bag columns the kernel reads and writes per bag: two u32 inputs, one u8 input, one u8 output.
 const BYTES_PER_BAG: u64 = 10;
 
+/// A backend by id, if it can run on this machine. May probe a GPU.
+pub fn available_backend(name: &str) -> ApiResult<Backend> {
+    let b = Backend::parse(name).ok_or_else(|| ApiError::invalid(format!("unknown backend '{name}'")))?;
+    match b.availability() {
+        Ok(_) => Ok(b),
+        Err(reason) => Err(ApiError::new(axum::http::StatusCode::BAD_REQUEST, "backend_unavailable", format!("{name}: {reason}"))),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BenchConfig {
@@ -48,14 +57,7 @@ impl BenchConfig {
         }
         let mut seen = Vec::new();
         for name in &self.backends {
-            let b = Backend::parse(name).ok_or_else(|| ApiError::invalid(format!("unknown backend '{name}'")))?;
-            if let Err(reason) = b.availability() {
-                return Err(ApiError::new(
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "backend_unavailable",
-                    format!("{name}: {reason}"),
-                ));
-            }
+            available_backend(name)?;
             if !seen.contains(name) {
                 seen.push(name.clone());
             }

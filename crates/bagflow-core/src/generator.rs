@@ -1,9 +1,11 @@
 use crate::rng::{flight_rng, stream_rng, Stream};
 use crate::soa::BagSoA;
+use crate::trace::{self, Stage, Task};
 use crate::types::*;
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Beta, Distribution, LogNormal, Normal};
+use std::time::Instant;
 
 pub struct GenConfig {
     pub seed: u64,
@@ -117,24 +119,55 @@ fn gen_bags(master: u64, f: &Flight, out: &mut Vec<BagRec>) {
     }
 }
 
+/// What a traced generator run did. Task sizes are bags produced.
+#[derive(Debug, Default)]
+pub struct GenTrace {
+    pub tasks: Vec<Task>,
+    pub stages: Vec<Stage>,
+    /// Flights whose bags were generated; the last few can be surplus to the target.
+    pub flights_computed: usize,
+}
+
 /// Generate flights until at least `target_bags` bags exist. Output is sorted by arrival time.
 pub fn generate(cfg: &GenConfig) -> (Vec<Flight>, BagSoA) {
+    let (flights, bags, _) = generate_traced(cfg, usize::MAX, Instant::now());
+    (flights, bags)
+}
+
+/// The sequential generator, with a task record for every `chunk_flights` flights.
+pub fn generate_traced(cfg: &GenConfig, chunk_flights: usize, t0: Instant) -> (Vec<Flight>, BagSoA, GenTrace) {
+    assert!(chunk_flights > 0);
+    let mut out = GenTrace::default();
     let mut frng = stream_rng(cfg.seed, Stream::Flights);
     let mut flights = Vec::new();
     let mut recs: Vec<BagRec> = Vec::with_capacity(cfg.target_bags + 1000);
     let mut id = 0u32;
     while recs.len() < cfg.target_bags {
-        let f = gen_flight(&mut frng, id);
-        gen_bags(cfg.seed, &f, &mut recs);
-        flights.push(f);
-        id += 1;
+        let (t, ()) = trace::task(t0, out.tasks.len(), || {
+            let before = recs.len();
+            let mut left = chunk_flights;
+            while left > 0 && recs.len() < cfg.target_bags {
+                let f = gen_flight(&mut frng, id);
+                gen_bags(cfg.seed, &f, &mut recs);
+                flights.push(f);
+                id += 1;
+                left -= 1;
+            }
+            ((recs.len() - before) as u64, ())
+        });
+        out.tasks.push(t);
     }
-    recs.sort_by_key(|r| (r.arrival, r.flight, r.pax)); // stable sort, so deterministic
-    let mut soa = BagSoA::default();
-    for r in &recs {
-        soa.push(r.pax, r.flight, r.weight_dg, r.priority, r.flags, r.arrival, r.deadline);
-    }
-    (flights, soa)
+    out.flights_computed = flights.len();
+    // stable sort, so deterministic
+    trace::stage(&mut out.stages, t0, "sort", false, || recs.sort_by_key(|r| (r.arrival, r.flight, r.pax)));
+    let soa = trace::stage(&mut out.stages, t0, "build_columns", false, || {
+        let mut soa = BagSoA::default();
+        for r in &recs {
+            soa.push(r.pax, r.flight, r.weight_dg, r.priority, r.flags, r.arrival, r.deadline);
+        }
+        soa
+    });
+    (flights, soa, out)
 }
 
 #[cfg(test)]
@@ -182,55 +215,96 @@ mod tests {
 // ---------------------------------------------------------------------------
 use rayon::prelude::*;
 
+/// Most flights drawn before their bags are generated.
 const FLIGHT_BATCH: usize = 2048;
+/// Starting guess for bags per flight, used only to size the first batch.
+const BAGS_PER_FLIGHT_GUESS: usize = 150;
+/// Flights per Rayon task in `generate_par`.
+const CHUNK_FLIGHTS: usize = 16;
 
 pub fn generate_par(cfg: &GenConfig, threads: usize) -> (Vec<Flight>, BagSoA) {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
         .unwrap();
+    let (flights, bags, _) = generate_on(&pool, cfg, CHUNK_FLIGHTS, Instant::now());
+    (flights, bags)
+}
+
+/// The parallel generator on an existing pool, with a task record per chunk of flights.
+pub fn generate_on(pool: &rayon::ThreadPool, cfg: &GenConfig, chunk_flights: usize, t0: Instant) -> (Vec<Flight>, BagSoA, GenTrace) {
+    assert!(chunk_flights > 0);
     pool.install(|| {
+        let mut out = GenTrace::default();
         let mut frng = stream_rng(cfg.seed, Stream::Flights);
         let mut flights: Vec<Flight> = Vec::new();
         let mut recs: Vec<BagRec> = Vec::with_capacity(cfg.target_bags + 1000);
         let mut id = 0u32;
 
         while recs.len() < cfg.target_bags {
+            // size the batch to what is still missing, so little work is thrown away.
+            // The output does not depend on the batch size: flights come from one
+            // stream in order, and surplus ones are dropped.
+            let per_flight_bags = if flights.is_empty() { BAGS_PER_FLIGHT_GUESS } else { (recs.len() / flights.len()).max(1) };
+            let batch_len = ((cfg.target_bags - recs.len()).div_ceil(per_flight_bags) + 1).min(FLIGHT_BATCH);
+
             // 1. flights are drawn sequentially (cheap, one shared stream)
-            let batch: Vec<Flight> = (0..FLIGHT_BATCH)
-                .map(|_| {
-                    let f = gen_flight(&mut frng, id);
-                    id += 1;
-                    f
-                })
-                .collect();
+            let batch: Vec<Flight> = trace::stage(&mut out.stages, t0, "draw_flights", false, || {
+                (0..batch_len)
+                    .map(|_| {
+                        let f = gen_flight(&mut frng, id);
+                        id += 1;
+                        f
+                    })
+                    .collect()
+            });
 
             // 2. bags per flight in parallel (each flight has its own RNG stream);
             //    collect() keeps flight order
-            let per_flight: Vec<Vec<BagRec>> = batch
-                .par_iter()
-                .map(|f| {
-                    let mut v = Vec::new();
-                    gen_bags(cfg.seed, f, &mut v);
-                    v
-                })
-                .collect();
+            let first_id = out.tasks.len();
+            let chunks: Vec<(Task, Vec<Vec<BagRec>>)> = trace::stage(&mut out.stages, t0, "generate_bags", true, || {
+                batch
+                    .par_chunks(chunk_flights)
+                    .with_max_len(1)
+                    .enumerate()
+                    .map(|(i, part)| {
+                        trace::task(t0, first_id + i, || {
+                            let per_flight: Vec<Vec<BagRec>> = part
+                                .iter()
+                                .map(|f| {
+                                    let mut v = Vec::new();
+                                    gen_bags(cfg.seed, f, &mut v);
+                                    v
+                                })
+                                .collect();
+                            (per_flight.iter().map(|v| v.len() as u64).sum(), per_flight)
+                        })
+                    })
+                    .collect()
+            });
+            out.flights_computed += batch.len();
 
             // 3. append in flight order, stopping exactly where the sequential version stops
-            for (f, v) in batch.into_iter().zip(per_flight) {
-                if recs.len() >= cfg.target_bags {
-                    break;
+            trace::stage(&mut out.stages, t0, "append", false, || {
+                let per_flight = chunks.into_iter().flat_map(|(t, v)| {
+                    out.tasks.push(t);
+                    v
+                });
+                for (f, v) in batch.into_iter().zip(per_flight) {
+                    if recs.len() >= cfg.target_bags {
+                        continue; // still drain, so every task record is kept
+                    }
+                    recs.extend(v);
+                    flights.push(f);
                 }
-                recs.extend(v);
-                flights.push(f);
-            }
+            });
         }
 
         // stable parallel sort, same key as the sequential version
-        recs.par_sort_by_key(|r| (r.arrival, r.flight, r.pax));
+        trace::stage(&mut out.stages, t0, "sort", true, || recs.par_sort_by_key(|r| (r.arrival, r.flight, r.pax)));
 
         // build every column in parallel
-        let soa = BagSoA {
+        let soa = trace::stage(&mut out.stages, t0, "build_columns", true, || BagSoA {
             id: (0..recs.len() as u32).into_par_iter().collect(),
             pax: recs.par_iter().map(|r| r.pax).collect(),
             flight: recs.par_iter().map(|r| r.flight).collect(),
@@ -239,8 +313,8 @@ pub fn generate_par(cfg: &GenConfig, threads: usize) -> (Vec<Flight>, BagSoA) {
             flags: recs.par_iter().map(|r| r.flags).collect(),
             arrival_s: recs.par_iter().map(|r| r.arrival).collect(),
             deadline_s: recs.par_iter().map(|r| r.deadline).collect(),
-        };
-        (flights, soa)
+        });
+        (flights, soa, out)
     })
 }
 
@@ -256,6 +330,26 @@ mod par_tests {
             let (pf, ps) = generate_par(&cfg, threads);
             assert_eq!(sf.len(), pf.len());
             assert_eq!(ss.checksum(), ps.checksum(), "threads = {threads}");
+        }
+    }
+
+    #[test]
+    fn traced_runs_match_and_cover_every_bag() {
+        for target in [1, 150, 5_000, 330_000] {
+            let cfg = GenConfig { seed: 11, target_bags: target };
+            let (_, plain) = generate(&cfg);
+            let (_, seq, st) = generate_traced(&cfg, 7, Instant::now());
+            assert_eq!(plain.checksum(), seq.checksum(), "sequential, target {target}");
+            assert_eq!(st.tasks.iter().map(|t| t.size).sum::<u64>(), seq.len() as u64);
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+            for chunk in [1, 13, 100_000] {
+                let (flights, par, pt) = generate_on(&pool, &cfg, chunk, Instant::now());
+                assert_eq!(plain.checksum(), par.checksum(), "target {target}, chunk {chunk}");
+                // tasks include the surplus flights that were computed and dropped
+                assert!(pt.tasks.iter().map(|t| t.size).sum::<u64>() >= par.len() as u64);
+                assert!(pt.flights_computed >= flights.len());
+                assert!(pt.tasks.iter().enumerate().all(|(i, t)| t.id as usize == i && t.worker < 3 && t.start_ns <= t.end_ns));
+            }
         }
     }
 }

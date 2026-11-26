@@ -3,9 +3,6 @@ use bagflow_api::{app, Config};
 #[tokio::main]
 async fn main() {
     let mut cfg = Config::repo_default();
-    if let Some(n) = std::env::var("BAGS").ok().and_then(|v| v.parse().ok()) {
-        cfg.legacy_bag_count = n;
-    }
     if let Some(dir) = std::env::var_os("BAGFLOW_DATA_DIR") {
         cfg.data_dir = dir.into();
     }

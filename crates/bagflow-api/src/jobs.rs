@@ -1,9 +1,11 @@
-//! Job registry: one worker thread runs simulations and benchmarks one at a time.
+//! Job registry: one worker thread runs every kind of job one at a time.
 //! Records (config and summary metrics) are saved to the data folder; full simulation
 //! data stays in memory for the most recent runs only.
 
 use crate::bench::{self, BenchConfig};
 use crate::error::{ApiError, ApiResult};
+use crate::parallel::{self, ParallelConfig};
+use crate::sweep::{self, SweepConfig};
 use crate::sim::{self, SimConfig, SimData};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,8 @@ pub const MAX_QUEUED: usize = 8;
 pub enum Kind {
     Simulation,
     Benchmark,
+    Parallel,
+    Sweep,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +61,9 @@ pub struct Progress {
     pub done: u64,
     pub total: u64,
     pub error: Option<String>,
+    /// Sweeps only: counts, running and finished experiments of the current pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
 }
 
 impl Progress {
@@ -68,6 +75,9 @@ impl Progress {
 pub enum Work {
     Simulation(SimConfig),
     Benchmark(BenchConfig),
+    /// With the retained run named in the config, held so it cannot be evicted while queued.
+    Parallel(ParallelConfig, Option<Arc<SimData>>),
+    Sweep(SweepConfig),
 }
 
 #[derive(Default)]
@@ -145,6 +155,8 @@ impl Jobs {
         let (kind, prefix, config) = match &work {
             Work::Simulation(c) => (Kind::Simulation, "sim", serde_json::to_value(c)),
             Work::Benchmark(c) => (Kind::Benchmark, "bench", serde_json::to_value(c)),
+            Work::Parallel(c, _) => (Kind::Parallel, "par", serde_json::to_value(c)),
+            Work::Sweep(c) => (Kind::Sweep, "sweep", serde_json::to_value(c)),
         };
         let config = config.map_err(|e| ApiError::internal(e.to_string()))?;
         // holding the queue lock keeps registry order equal to execution order
@@ -171,7 +183,7 @@ impl Jobs {
         };
         reg.order.push(id.clone());
         reg.records.insert(id.clone(), record);
-        let progress = Progress { status: Status::Queued, phase: "queued", done: 0, total: 0, error: None };
+        let progress = Progress { status: Status::Queued, phase: "queued", done: 0, total: 0, error: None, detail: None };
         reg.live.insert(id.clone(), watch::channel(progress).0);
         drop(reg);
         queue.0.send((id.clone(), work)).map_err(|_| ApiError::internal("the worker thread has stopped"))?;
@@ -239,14 +251,17 @@ fn worker(shared: Arc<Shared>, rx: Receiver<(String, Work)>) {
             }
             reg.live.get(&id).cloned()
         };
-        let mut report = |phase: &'static str, done: u64, total: u64| {
+        let publish = |phase: &'static str, done: u64, total: u64, detail: Option<Value>| {
             if let Some(tx) = &tx {
-                tx.send_replace(Progress { status: Status::Running, phase, done, total, error: None });
+                tx.send_replace(Progress { status: Status::Running, phase, done, total, error: None, detail });
             }
         };
+        let mut report = |phase: &'static str, done: u64, total: u64| publish(phase, done, total, None);
         let outcome = catch_unwind(AssertUnwindSafe(|| match &work {
             Work::Simulation(cfg) => sim::execute(cfg, &mut report).map(|f| (f.result, Some(Arc::new(f.data)))),
             Work::Benchmark(cfg) => bench::execute(cfg, &mut report).map(|r| (r, None)),
+            Work::Parallel(cfg, run) => parallel::execute(cfg, run.as_deref(), &mut report).map(|r| (r, None)),
+            Work::Sweep(cfg) => sweep::execute(cfg, &publish).map(|r| (r, None)),
         }))
         .unwrap_or_else(|panic| {
             let text = panic.downcast_ref::<&str>().map(|s| s.to_string());
@@ -284,7 +299,7 @@ fn worker(shared: Arc<Shared>, rx: Receiver<(String, Work)>) {
         if let Some(tx) = reg.live.remove(&id) {
             let last = tx.borrow().clone();
             let phase = if status == Status::Done { "done" } else { "failed" };
-            tx.send_replace(Progress { status, phase, done: last.done, total: last.total, error });
+            tx.send_replace(Progress { status, phase, error, ..last });
         }
     }
 }

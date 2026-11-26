@@ -2,6 +2,7 @@
 use rayon::prelude::*;
 
 pub mod runner;
+pub mod traced;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Out {

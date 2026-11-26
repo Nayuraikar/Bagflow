@@ -179,6 +179,78 @@ fn repeat(
     Measurement { samples, identical }
 }
 
+/// Runs one GPU kernel on an input of at most the session's capacity.
+pub type GpuSession = Box<dyn FnMut(Input, &mut [u8]) -> (Out, GpuPhases)>;
+
+/// Create the device buffers for `bags` bags. Fails for backends that are not a GPU
+/// or cannot run here.
+#[allow(unused_variables)]
+pub fn gpu_session(backend: Backend, bags: usize) -> Result<GpuSession, String> {
+    match backend {
+        Backend::Metal => {
+            #[cfg(has_metal)]
+            {
+                let m = metal::Metal::new(bags).ok_or("could not create Metal buffers")?;
+                Ok(Box::new(move |i: Input, o: &mut [u8]| {
+                    let (r, t) = m.run(i.arrival, i.deadline, i.flags, o);
+                    (r, GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download })
+                }))
+            }
+            #[cfg(not(has_metal))]
+            Err("Metal is only built on macOS".to_string())
+        }
+        Backend::CudaNaive | Backend::CudaWarp | Backend::CudaPtx => {
+            #[cfg(has_cuda)]
+            {
+                let variant = match backend {
+                    Backend::CudaNaive => 0,
+                    Backend::CudaWarp => 1,
+                    _ => 2,
+                };
+                let g = cuda::Cuda::new(bags).ok_or("could not create CUDA buffers")?;
+                Ok(Box::new(move |i: Input, o: &mut [u8]| {
+                    let (r, t) = g.run(variant, i.arrival, i.deadline, i.flags, o);
+                    (r, GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download })
+                }))
+            }
+            #[cfg(not(has_cuda))]
+            Err("CUDA was not built".to_string())
+        }
+        _ => Err(format!("{} is not a GPU backend", backend.id())),
+    }
+}
+
+/// One repetition of a prepared kernel, writing the classes into the buffer.
+pub type Prepared = Box<dyn FnMut(Input, &mut [u8]) -> (Out, Option<GpuPhases>)>;
+
+/// Create whatever a backend needs before it can be timed: a pool or GPU buffers for
+/// `bags` bags. `threads` is used only when `takes_threads()`.
+pub fn prepare(backend: Backend, threads: usize, bags: usize) -> Result<Prepared, String> {
+    backend.availability()?;
+    let cpu = |k: Kernel| -> Prepared { Box::new(move |i: Input, o: &mut [u8]| (k(i.arrival, i.deadline, i.flags, o), None)) };
+    let simd = || simd_kernel().map(|(_, k)| k).ok_or_else(|| "no SIMD kernel".to_string());
+
+    Ok(match backend {
+        Backend::Scalar => cpu(scalar),
+        Backend::Ilp => cpu(ilp),
+        Backend::Neon | Backend::Avx2 => cpu(simd()?),
+        Backend::OpenMp => cpu(openmp),
+        Backend::RayonIlp | Backend::RayonNeon | Backend::RayonAvx2 => {
+            let kern = if backend == Backend::RayonIlp { ilp as Kernel } else { simd()? };
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(|e| e.to_string())?;
+            Box::new(move |i: Input, o: &mut [u8]| (par(&pool, kern, i.arrival, i.deadline, i.flags, o), None))
+        }
+        Backend::Metal | Backend::CudaNaive | Backend::CudaWarp | Backend::CudaPtx => {
+            let mut gpu = gpu_session(backend, bags)?;
+            Box::new(move |i: Input, o: &mut [u8]| {
+                let (r, phases) = gpu(i, o);
+                (r, Some(phases))
+            })
+        }
+        Backend::Mpi => return Err("live MPI is not supported".to_string()),
+    })
+}
+
 /// Run one backend `warmup + reps` times. `threads` is used only when `takes_threads()`.
 /// Pools and GPU buffers are created before timing starts. `tick` is called once per repetition.
 #[allow(clippy::too_many_arguments)]
@@ -191,50 +263,33 @@ pub fn measure(
     reps: usize,
     tick: &mut dyn FnMut(),
 ) -> Result<Measurement, String> {
-    backend.availability()?;
-    let (a, d, f) = (input.arrival, input.deadline, input.flags);
-    let cpu = |k: Kernel, tick: &mut dyn FnMut()| repeat(reference, warmup, reps, tick, |o| (k(a, d, f, o), None));
-    let simd = || simd_kernel().map(|(_, k)| k).ok_or_else(|| "no SIMD kernel".to_string());
+    let mut kernel = prepare(backend, threads, input.arrival.len())?;
+    Ok(repeat(reference, warmup, reps, tick, |o| kernel(input, o)))
+}
 
-    Ok(match backend {
-        Backend::Scalar => cpu(scalar, tick),
-        Backend::Ilp => cpu(ilp, tick),
-        Backend::Neon | Backend::Avx2 => cpu(simd()?, tick),
-        Backend::OpenMp => cpu(openmp, tick),
-        Backend::RayonIlp | Backend::RayonNeon | Backend::RayonAvx2 => {
-            let kern = if backend == Backend::RayonIlp { ilp as Kernel } else { simd()? };
-            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(|e| e.to_string())?;
-            repeat(reference, warmup, reps, tick, |o| (par(&pool, kern, a, d, f, o), None))
-        }
-        Backend::Metal => {
-            #[cfg(has_metal)]
-            {
-                let m = metal::Metal::new(a.len()).ok_or("could not create Metal buffers")?;
-                repeat(reference, warmup, reps, tick, |o| {
-                    let (r, t) = m.run(a, d, f, o);
-                    (r, Some(GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download }))
-                })
+/// Like `measure` for two backends, alternating between them so that both are timed
+/// under the same conditions. Each repetition is one run of `a`, then one of `b`.
+#[allow(clippy::too_many_arguments)]
+pub fn measure_alternating(
+    a: (Backend, usize),
+    b: (Backend, usize),
+    input: Input,
+    reference: (&Out, &[u8]),
+    warmup: usize,
+    reps: usize,
+) -> Result<(Measurement, Measurement), String> {
+    let mut first = prepare(a.0, a.1, input.arrival.len())?;
+    let mut second = prepare(b.0, b.1, input.arrival.len())?;
+    let empty = || Measurement { samples: Vec::new(), identical: true };
+    let (mut x, mut y) = (empty(), empty());
+    for i in 0..warmup + reps {
+        for (kernel, into) in [(&mut first, &mut x), (&mut second, &mut y)] {
+            let one = repeat(reference, 0, 1, &mut || {}, |o| kernel(input, o));
+            into.identical &= one.identical;
+            if i >= warmup {
+                into.samples.extend(one.samples);
             }
-            #[cfg(not(has_metal))]
-            return Err("Metal is only built on macOS".to_string());
         }
-        Backend::CudaNaive | Backend::CudaWarp | Backend::CudaPtx => {
-            #[cfg(has_cuda)]
-            {
-                let variant = match backend {
-                    Backend::CudaNaive => 0,
-                    Backend::CudaWarp => 1,
-                    _ => 2,
-                };
-                let g = cuda::Cuda::new(a.len()).ok_or("could not create CUDA buffers")?;
-                repeat(reference, warmup, reps, tick, |o| {
-                    let (r, t) = g.run(variant, a, d, f, o);
-                    (r, Some(GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download }))
-                })
-            }
-            #[cfg(not(has_cuda))]
-            return Err("CUDA was not built".to_string());
-        }
-        Backend::Mpi => return Err("live MPI is not supported".to_string()),
-    })
+    }
+    Ok((x, y))
 }

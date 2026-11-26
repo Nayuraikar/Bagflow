@@ -1,3 +1,4 @@
+pub mod aggregate;
 pub mod collect;
 pub mod engine;
 pub mod engine2;
@@ -9,4 +10,5 @@ pub mod rng;
 pub mod scenarios;
 pub mod soa;
 pub mod state;
+pub mod trace;
 pub mod types;

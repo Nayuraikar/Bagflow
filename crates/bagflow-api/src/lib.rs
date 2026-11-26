@@ -1,12 +1,14 @@
-//! HTTP API over `engine2` and the batch kernels. JSON in snake_case; times are
+//! HTTP API over `engine2`, the batch kernels and the parallel workloads. JSON in snake_case; times are
 //! simulation milliseconds; unavailable values are `null`.
 
 pub mod bench;
 pub mod error;
 pub mod jobs;
-mod legacy;
+pub mod parallel;
+pub mod pipeline;
 pub mod sim;
 pub mod static_results;
+pub mod sweep;
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
@@ -14,16 +16,17 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use bagflow_core::soa::BagSoA;
 use bench::BenchConfig;
 use error::{ApiError, ApiResult};
 use jobs::{Jobs, Kind, Progress, Record, Status, Work};
+use parallel::ParallelConfig;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sim::SimConfig;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use sweep::SweepConfig;
 use tower_http::cors::CorsLayer;
 
 /// Simulation runs whose full data stays in memory.
@@ -33,8 +36,6 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub results_dir: PathBuf,
     pub retain: usize,
-    /// Dataset size for the old `/api/run`, built on first use.
-    pub legacy_bag_count: usize,
 }
 
 impl Config {
@@ -45,7 +46,6 @@ impl Config {
             data_dir: root.join("data"),
             results_dir: root.join("results"),
             retain: DEFAULT_RETAIN,
-            legacy_bag_count: 250_000,
         }
     }
 }
@@ -53,8 +53,6 @@ impl Config {
 pub struct AppState {
     pub jobs: Jobs,
     results_dir: PathBuf,
-    pub(crate) legacy_bags: OnceLock<BagSoA>,
-    pub(crate) legacy_bag_count: usize,
     backends: OnceLock<Value>,
 }
 
@@ -62,8 +60,6 @@ pub fn app(cfg: Config) -> std::io::Result<Router> {
     let state = Arc::new(AppState {
         jobs: Jobs::start(cfg.data_dir, cfg.retain)?,
         results_dir: cfg.results_dir,
-        legacy_bags: OnceLock::new(),
-        legacy_bag_count: cfg.legacy_bag_count,
         backends: OnceLock::new(),
     });
     Ok(Router::new()
@@ -79,10 +75,16 @@ pub fn app(cfg: Config) -> std::io::Result<Router> {
         .route("/api/benchmarks/:id", get(benchmark))
         .route("/api/benchmarks/:id/events", get(benchmark_events))
         .route("/api/benchmarks/:id/metrics", get(benchmark_metrics))
+        .route("/api/parallel-runs", post(create_parallel))
+        .route("/api/parallel-runs/:id", get(parallel_run))
+        .route("/api/parallel-runs/:id/events", get(parallel_events))
+        .route("/api/parallel-runs/:id/metrics", get(parallel_metrics))
+        .route("/api/sweeps", post(create_sweep))
+        .route("/api/sweeps/:id", get(sweep_run))
+        .route("/api/sweeps/:id/events", get(sweep_events))
+        .route("/api/sweeps/:id/metrics", get(sweep_metrics))
         .route("/api/static-results", get(static_rows))
         .route("/api/history", get(history))
-        .route("/api/info", get(legacy::info))
-        .route("/api/run", get(legacy::run))
         .fallback(|| async { ApiError::not_found("no such endpoint") })
         .layer(CorsLayer::permissive())
         .with_state(state))
@@ -128,6 +130,15 @@ async fn health(State(s): App) -> ApiResult<Json<Value>> {
             .clone())
     })
     .await?;
+    // every available kernel backend can run the classify workload
+    let available: Vec<&Value> = backends.as_array().into_iter().flatten().filter(|b| b["available"] == true).map(|b| &b["id"]).collect();
+    let parallel_options: Vec<Value> = parallel::WORKLOADS
+        .iter()
+        .map(|&w| {
+            let list = if w == "classify" { json!(available) } else { json!(parallel::backends(w)) };
+            json!({ "id": w, "backends": list, "chunk_unit": parallel::chunk_unit(w) })
+        })
+        .collect();
     let records = s.jobs.history();
     let last_simulation = records
         .iter()
@@ -150,11 +161,30 @@ async fn health(State(s): App) -> ApiResult<Json<Value>> {
             "scenarios": bagflow_core::scenarios::ALL.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>(),
             "routings": bagflow_core::engine2::Strategy::ALL.iter().map(|x| x.name()).collect::<Vec<_>>(),
             "policies": bagflow_core::engine2::Policy::ALL.iter().map(|x| x.name()).collect::<Vec<_>>(),
+            "parallel_workloads": parallel_options,
+            "parallel_limits": {
+                "bag_count": parallel::BAG_COUNT_RANGE,
+                "aggregate_bag_count": parallel::AGGREGATE_BAG_COUNT_RANGE,
+                "repetitions": parallel::REPETITIONS_RANGE,
+                "threads": bench::THREADS_RANGE,
+                "max_tasks": parallel::MAX_TASKS,
+            },
+            "sweep_defaults": SweepConfig::default(),
+            "sweep_limits": {
+                "bag_count": sweep::BAG_COUNT_RANGE,
+                "capacity_pct": sim::CAPACITY_PCT_RANGE,
+                "server_multiplier": sim::MULTIPLIER_RANGE,
+                "threads": bench::THREADS_RANGE,
+                "max_thread_counts": sweep::MAX_THREAD_COUNTS,
+                "max_experiments": sweep::MAX_EXPERIMENTS,
+                "max_simulated_bags": sweep::MAX_SIMULATED_BAGS,
+            },
             "simulation_defaults": SimConfig::default(),
             "simulation_limits": {
                 "bag_count": sim::BAG_COUNT_RANGE,
                 "capacity_pct": sim::CAPACITY_PCT_RANGE,
                 "server_multiplier": sim::MULTIPLIER_RANGE,
+                "threads": bench::THREADS_RANGE,
             },
             "benchmark_limits": {
                 "bag_count": bench::BAG_COUNT_RANGE,
@@ -168,7 +198,8 @@ async fn health(State(s): App) -> ApiResult<Json<Value>> {
 
 async fn create_simulation(State(s): App, req: Result<Json<SimConfig>, JsonRejection>) -> ApiResult<(StatusCode, Json<Value>)> {
     let cfg = body(req)?;
-    cfg.validate()?;
+    // availability checks can create a GPU context
+    let cfg = blocking(move || cfg.validate().map(|()| cfg)).await?;
     let id = s.jobs.submit(Work::Simulation(cfg))?;
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued" }))))
 }
@@ -179,6 +210,25 @@ async fn create_benchmark(State(s): App, req: Result<Json<BenchConfig>, JsonReje
     let cfg = blocking(move || cfg.validate()).await?;
     let id = s.jobs.submit(Work::Benchmark(cfg))?;
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued" }))))
+}
+
+async fn create_parallel(State(s): App, req: Result<Json<ParallelConfig>, JsonRejection>) -> ApiResult<(StatusCode, Json<Value>)> {
+    let cfg = body(req)?;
+    let run = match (&cfg.simulation_id, cfg.workload.as_str()) {
+        (Some(id), "aggregate") => Some(s.jobs.data(id)?),
+        _ => None, // validation rejects a simulation_id on other workloads
+    };
+    let bags = run.as_ref().map(|r| r.aggregate_input().history.bags() as u64);
+    let cfg = blocking(move || cfg.validate(bags)).await?;
+    let id = s.jobs.submit(Work::Parallel(cfg, run))?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued" }))))
+}
+
+async fn create_sweep(State(s): App, req: Result<Json<SweepConfig>, JsonRejection>) -> ApiResult<(StatusCode, Json<Value>)> {
+    let cfg = body(req)?.validate()?;
+    let experiments = cfg.experiment_count();
+    let id = s.jobs.submit(Work::Sweep(cfg))?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued", "experiment_count": experiments }))))
 }
 
 /// A record without its result.
@@ -200,7 +250,7 @@ fn job_json(s: &AppState, r: &Record) -> Value {
 async fn simulation(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let r = s.jobs.record(&id, Kind::Simulation)?;
     let mut out = job_json(&s, &r);
-    for key in ["dataset", "engine_checksum", "sim_wall_s", "summary"] {
+    for key in ["dataset", "engine_checksum", "sim_wall_s", "summary", "pipeline"] {
         out[key] = r.result.as_ref().map_or(Value::Null, |x| x[key].clone());
     }
     out["retained"] = json!(s.jobs.retained(&id).is_some());
@@ -244,17 +294,42 @@ async fn bag(State(s): App, Path((id, bag_id)): Path<(String, String)>, q: Resul
     s.jobs.data(&id)?.bag_detail(bag_id, at).map(Json)
 }
 
-async fn benchmark(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let r = s.jobs.record(&id, Kind::Benchmark)?;
-    Ok(Json(job_json(&s, &r)))
+async fn job_status(s: &AppState, id: &str, kind: Kind) -> ApiResult<Json<Value>> {
+    let r = s.jobs.record(id, kind)?;
+    Ok(Json(job_json(s, &r)))
 }
 
-async fn benchmark_metrics(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let r = s.jobs.finished(&id, Kind::Benchmark)?;
-    let mut out = r.result.ok_or_else(|| ApiError::internal("finished benchmark has no result"))?;
+/// The stored result of a finished job, with its id and config.
+fn job_metrics(s: &AppState, id: &str, kind: Kind) -> ApiResult<Json<Value>> {
+    let r = s.jobs.finished(id, kind)?;
+    let mut out = r.result.ok_or_else(|| ApiError::internal("finished job has no result"))?;
     out["id"] = json!(r.id);
     out["config"] = r.config;
     Ok(Json(out))
+}
+
+async fn benchmark(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_status(&s, &id, Kind::Benchmark).await
+}
+
+async fn benchmark_metrics(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_metrics(&s, &id, Kind::Benchmark)
+}
+
+async fn parallel_run(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_status(&s, &id, Kind::Parallel).await
+}
+
+async fn parallel_metrics(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_metrics(&s, &id, Kind::Parallel)
+}
+
+async fn sweep_run(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_status(&s, &id, Kind::Sweep).await
+}
+
+async fn sweep_metrics(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    job_metrics(&s, &id, Kind::Sweep)
 }
 
 async fn static_rows(State(s): App) -> ApiResult<Json<Value>> {
@@ -284,6 +359,26 @@ async fn history(State(s): App, q: Result<Query<HistoryQuery>, QueryRejection>) 
             let result = r.result.as_ref();
             out["summary"] = match r.kind {
                 Kind::Simulation => result.map_or(Value::Null, |x| x["summary"].clone()),
+                Kind::Parallel => result.map_or(Value::Null, |x| {
+                    json!({
+                        "workload": x["workload"],
+                        "backend": x["backend"],
+                        "threads": x["threads"],
+                        "bags": x["bags"],
+                        "wall_ms": x["selected"]["wall_ms"],
+                        "speedup": x["speedup"],
+                        "matches_sequential": x["matches_sequential"],
+                    })
+                }),
+                Kind::Sweep => result.map_or(Value::Null, |x| {
+                    let passes: Vec<Value> = x["passes"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|p| json!({ "threads": p["threads"], "wall_ms": p["wall_ms"], "speedup": p["speedup"] }))
+                        .collect();
+                    json!({ "experiment_count": x["experiment_count"], "passes": passes, "consistency": x["consistency"] })
+                }),
                 Kind::Benchmark => result.map_or(Value::Null, |x| {
                     let rows: Vec<Value> = x["results"]
                         .as_array()
@@ -321,6 +416,7 @@ fn sse(s: &AppState, id: &str, kind: Kind) -> ApiResult<Sse<impl futures_util::S
             done: 0,
             total: 0,
             error: record.error,
+            detail: None,
         },
     };
     let event = |p: &Progress| {
@@ -352,4 +448,12 @@ async fn simulation_events(State(s): App, Path(id): Path<String>) -> ApiResult<i
 
 async fn benchmark_events(State(s): App, Path(id): Path<String>) -> ApiResult<impl axum::response::IntoResponse> {
     sse(&s, &id, Kind::Benchmark)
+}
+
+async fn parallel_events(State(s): App, Path(id): Path<String>) -> ApiResult<impl axum::response::IntoResponse> {
+    sse(&s, &id, Kind::Parallel)
+}
+
+async fn sweep_events(State(s): App, Path(id): Path<String>) -> ApiResult<impl axum::response::IntoResponse> {
+    sse(&s, &id, Kind::Sweep)
 }

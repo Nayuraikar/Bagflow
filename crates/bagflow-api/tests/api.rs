@@ -89,6 +89,262 @@ async fn health_lists_options_and_backends() {
     assert_eq!(backend("scalar")["available"], true);
     assert_eq!(backend("mpi")["available"], false);
     assert!(backend("mpi")["reason"].is_string());
+    let workloads = h["options"]["parallel_workloads"].as_array().unwrap();
+    assert_eq!(workloads.len(), 3);
+    assert_eq!(workloads[0]["backends"], json!(["sequential", "rayon"]));
+    assert!(workloads[1]["backends"].as_array().unwrap().iter().all(|id| backend(id.as_str().unwrap())["available"] == true));
+    assert_eq!(h["options"]["sweep_defaults"]["scenarios"].as_array().unwrap().len(), 6);
+    assert!(h["options"]["simulation_defaults"]["classify_backend"].is_string());
+}
+
+#[tokio::test]
+async fn legacy_endpoints_are_gone() {
+    let dir = TempDir::new("legacy");
+    let app = server(&dir, 1);
+    for uri in ["/api/info", "/api/run", "/api/run?scenario=Normal"] {
+        expect_error(&app, "GET", uri, None, StatusCode::NOT_FOUND, "not_found").await;
+    }
+}
+
+fn float(v: &Value) -> f64 {
+    v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"))
+}
+
+#[tokio::test]
+async fn every_run_reports_a_measured_pipeline() {
+    let dir = TempDir::new("pipeline");
+    let app = server(&dir, 4);
+    let mut checksums = Vec::new();
+    for (threads, backend) in [(1, "scalar"), (3, "openmp"), (2, "rayon-ilp")] {
+        let id = submit(&app, "/api/simulations", json!({ "bag_count": 20000, "scenario": "PeakSurge", "threads": threads, "classify_backend": backend })).await;
+        let r = wait_done(&app, &format!("/api/simulations/{id}")).await;
+        checksums.push(r["engine_checksum"].clone());
+        let p = &r["pipeline"];
+        let phases = p["phases"].as_array().unwrap();
+        let ids: Vec<&str> = phases.iter().map(|x| x["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["generate", "classify", "simulate", "aggregate"]);
+        for x in phases {
+            assert!(float(&x["time_ms"]) > 0.0, "{x}");
+            if x["id"] == "simulate" {
+                assert_eq!(x["has_parallel_implementation"], false);
+                assert!(x["baseline"].is_null() && x["speedup"].is_null());
+            } else {
+                assert_eq!(x["identical_to_baseline"], true, "{x}");
+                let ratio = float(&x["baseline"]["time_ms"]) / float(&x["time_ms"]);
+                assert!((float(&x["speedup"]) - ratio).abs() < 1e-9);
+            }
+        }
+        assert_eq!(phases[0]["threads"], threads);
+        assert_eq!(phases[1]["backend"], backend);
+        assert_eq!(phases[3]["verified_against_engine"], true);
+        // PeakSurge adds bags after generation
+        assert!(int(&phases[2]["bags"]) > int(&phases[0]["bags"]));
+        let output = &phases[1]["output"];
+        assert_eq!(["on_track", "at_risk", "critical"].iter().map(|k| int(&output[*k])).sum::<u64>(), int(&phases[1]["bags"]));
+
+        let other = float(&p["other_sequential"]["time_ms"]);
+        let total = |key: &str| {
+            other + phases.iter().map(|x| float(if key == "baseline" && !x["baseline"].is_null() { &x["baseline"]["time_ms"] } else { &x["time_ms"] })).sum::<f64>()
+        };
+        assert!((float(&p["full"]["baseline_ms"]) - total("baseline")).abs() < 1e-6);
+        assert!((float(&p["full"]["parallel_ms"]) - total("parallel")).abs() < 1e-6);
+        let a = &p["amdahl"];
+        assert!(float(&a["parallelisable_fraction"]) > 0.0 && float(&a["parallelisable_fraction"]) < 1.0);
+        assert!(float(&a["max_speedup"]) >= float(&p["full"]["speedup"]), "{a}");
+        let metrics = get(&app, &format!("/api/simulations/{id}/metrics")).await;
+        assert_eq!(&metrics["pipeline"], p);
+        assert!(metrics["nodes"][0]["max_wait_ms"].is_u64());
+    }
+    assert!(checksums.windows(2).all(|w| w[0] == w[1]), "threads and backend must not change the result: {checksums:?}");
+    for body in [r#"{"threads": 0}"#, r#"{"threads": 65}"#, r#"{"classify_backend": "quantum"}"#] {
+        expect_error(&app, "POST", "/api/simulations", Some(body), StatusCode::BAD_REQUEST, "invalid_request").await;
+    }
+    expect_error(&app, "POST", "/api/simulations", Some(r#"{"classify_backend": "mpi"}"#), StatusCode::BAD_REQUEST, "backend_unavailable").await;
+}
+
+/// Every task lies inside the job, and one worker never runs two tasks at once.
+fn check_tasks(run: &Value, threads: u64) -> u64 {
+    let wall = float(&run["wall_ms"]);
+    let tasks = run["tasks"].as_array().unwrap();
+    let mut by_worker: std::collections::BTreeMap<u64, Vec<(f64, f64)>> = Default::default();
+    for (i, t) in tasks.iter().enumerate() {
+        assert_eq!(int(&t["id"]), i as u64);
+        let (a, b) = (float(&t["start_ms"]), float(&t["end_ms"]));
+        assert!(0.0 <= a && a <= b && b <= wall, "{t} outside a job of {wall} ms");
+        assert!(int(&t["worker"]) < threads, "{t}");
+        by_worker.entry(int(&t["worker"])).or_default().push((a, b));
+    }
+    for spans in by_worker.values_mut() {
+        spans.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        assert!(spans.windows(2).all(|w| w[0].1 <= w[1].0), "one worker overlaps itself: {spans:?}");
+    }
+    for s in run["stages"].as_array().unwrap() {
+        assert!(float(&s["start_ms"]) <= float(&s["end_ms"]) && float(&s["end_ms"]) <= wall);
+    }
+    tasks.iter().map(|t| int(&t["size"])).sum()
+}
+
+#[tokio::test]
+async fn parallel_runs_return_task_records_and_match_sequential() {
+    let dir = TempDir::new("parallel");
+    let app = server(&dir, 1);
+    let h = get(&app, "/api/health").await;
+    for w in h["options"]["parallel_workloads"].as_array().unwrap() {
+        let workload = w["id"].as_str().unwrap();
+        for backend in w["backends"].as_array().unwrap() {
+            let backend = backend.as_str().unwrap();
+            let tag = format!("{workload}/{backend}");
+            let id = submit(&app, "/api/parallel-runs", json!({ "workload": workload, "backend": backend, "threads": 3, "bag_count": 100000, "repetitions": 2 })).await;
+            let base = format!("/api/parallel-runs/{id}");
+            wait_done(&app, &base).await;
+            let m = get(&app, &format!("{base}/metrics")).await;
+            assert_eq!(m["matches_sequential"], true, "{tag}");
+            assert_eq!(m["result_checksum"], m["sequential_checksum"], "{tag}");
+            let bags = int(&m["bags"]);
+            let (seq, sel) = (&m["sequential"], &m["selected"]);
+            assert_eq!(check_tasks(seq, 1), bags, "{tag} sequential");
+            assert_eq!(sel["samples_ms"].as_array().unwrap().len(), 2);
+            let gpu = backend == "metal" || backend.starts_with("cuda");
+            let threaded = backend == "openmp" || backend.starts_with("rayon");
+            if gpu {
+                assert!(sel["tasks"].as_array().unwrap().is_empty() && m["threads"].is_null(), "{tag}");
+                for k in ["copy_in_ms", "kernel_ms", "copy_out_ms"] {
+                    assert!(float(&m["gpu"][k]) >= 0.0, "{tag} {k}");
+                }
+            } else {
+                assert!(m["gpu"].is_null());
+                assert_eq!(m["threads"], if threaded { 3 } else { 1 }, "{tag}");
+                let covered = check_tasks(sel, int(&m["threads"]));
+                // the parallel generator also reports the surplus flights it dropped
+                assert!(if workload == "generate" { covered >= bags } else { covered == bags }, "{tag}: {covered} of {bags}");
+                assert!(sel["tasks"].as_array().unwrap().len() > 1, "{tag}");
+            }
+            let merges = (workload == "aggregate" && backend == "rayon") || (workload == "classify" && threaded) || (workload == "generate" && backend == "rayon");
+            assert_eq!(sel["merge_ms"].is_f64(), merges, "{tag}");
+            let simd = ["neon", "avx2", "rayon-neon", "rayon-avx2"].contains(&backend);
+            assert_eq!(m["simd"].is_object(), simd, "{tag}");
+        }
+    }
+    let history = get(&app, "/api/history?kind=parallel").await;
+    assert_eq!(history["items"][0]["summary"]["matches_sequential"], true);
+    let id = history["items"][0]["id"].as_str().unwrap();
+    let (_, events) = send(&app, "GET", &format!("/api/parallel-runs/{id}/events"), None).await;
+    assert!(events.starts_with("event: done"), "{events}");
+    expect_error(&app, "GET", &format!("/api/sweeps/{id}"), None, StatusCode::NOT_FOUND, "not_found").await;
+}
+
+#[tokio::test]
+async fn aggregation_can_use_a_retained_run() {
+    let dir = TempDir::new("agg");
+    let app = server(&dir, 1);
+    let sim = submit(&app, "/api/simulations", json!({ "bag_count": 20000, "capacity_pct": 20 })).await;
+    let run = wait_done(&app, &format!("/api/simulations/{sim}")).await;
+    let id = submit(&app, "/api/parallel-runs", json!({ "workload": "aggregate", "simulation_id": sim, "threads": 2 })).await;
+    wait_done(&app, &format!("/api/parallel-runs/{id}")).await;
+    let m = get(&app, &format!("/api/parallel-runs/{id}/metrics")).await;
+    assert_eq!(m["bags"], run["summary"]["total_bags"]);
+    assert_eq!(m["output"]["delayed"], run["summary"]["delayed_bags"]);
+    assert_eq!(m["output"]["loaded_on_time"], run["summary"]["loaded_on_time"]);
+
+    let bad = [
+        r#"{"workload": "sort"}"#,
+        r#"{"workload": "generate", "backend": "openmp"}"#,
+        r#"{"workload": "classify", "backend": "sequential"}"#,
+        r#"{"workload": "classify", "simulation_id": "x"}"#,
+        r#"{"workload": "aggregate", "bag_count": 1000001}"#,
+        r#"{"bag_count": 999}"#,
+        r#"{"threads": 0}"#,
+        r#"{"repetitions": 0}"#,
+        r#"{"repetitions": 11}"#,
+        r#"{"chunk_size": 0}"#,
+        r#"{"bag_count": 10000000, "chunk_size": 1}"#,
+    ];
+    for body in bad {
+        expect_error(&app, "POST", "/api/parallel-runs", Some(body), StatusCode::BAD_REQUEST, "invalid_request").await;
+    }
+    expect_error(&app, "POST", "/api/parallel-runs", Some(r#"{"backend": "mpi"}"#), StatusCode::BAD_REQUEST, "backend_unavailable").await;
+    expect_error(&app, "POST", "/api/parallel-runs", Some(r#"{"workload": "aggregate", "simulation_id": "nope"}"#), StatusCode::NOT_FOUND, "not_found").await;
+}
+
+#[tokio::test]
+async fn sweep_runs_every_experiment_and_matches_one_thread() {
+    let dir = TempDir::new("sweep");
+    let app = server(&dir, 1);
+    let (status, text) = send(&app, "POST", "/api/sweeps", Some(&json!({
+        "scenarios": ["Normal", "SorterOverload", "ConveyorFailure"], "routings": ["dijkstra", "congestion"],
+        "policies": ["fcfs", "edf"], "capacity_pcts": [100, 70], "bag_count": 5000, "threads": [3, 2]
+    }).to_string())).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{text}");
+    let accepted: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(accepted["experiment_count"], 24);
+    let base = format!("/api/sweeps/{}", accepted["id"].as_str().unwrap());
+    let (_, events) = send(&app, "GET", &format!("{base}/events"), None).await;
+    assert!(events.contains("event: done"), "{events}");
+    let status = wait_done(&app, &base).await;
+    assert_eq!((int(&status["config"]["bag_count"]), &status["config"]["threads"]), (5000, &json!([2, 3])));
+
+    let m = get(&app, &format!("{base}/metrics")).await;
+    let experiments = m["experiments"].as_array().unwrap();
+    assert_eq!(experiments.len(), 24);
+    assert_eq!(m["consistency"], json!({ "checked": true, "compared_runs": 48, "all_identical": true }));
+    let passes = m["passes"].as_array().unwrap();
+    assert_eq!(passes.iter().map(|p| int(&p["threads"])).collect::<Vec<_>>(), [1, 2, 3]);
+    assert_eq!((float(&passes[0]["speedup"]), float(&passes[0]["efficiency_pct"])), (1.0, 100.0));
+    for p in passes {
+        let threads = int(&p["threads"]);
+        assert_eq!((int(&p["completed"]), int(&p["failed"]), int(&p["running"])), (24, 0, 0));
+        let wall = float(&p["wall_ms"]);
+        assert!((float(&p["speedup"]) - float(&passes[0]["wall_ms"]) / wall).abs() < 1e-9);
+        assert!((float(&p["efficiency_pct"]) - 100.0 * float(&p["speedup"]) / threads as f64).abs() < 1e-9);
+        let workers = p["workers"].as_array().unwrap();
+        assert_eq!(workers.len() as u64, threads);
+        assert_eq!(workers.iter().map(|w| int(&w["experiments"])).sum::<u64>(), 24);
+        let runs = p["runs"].as_array().unwrap();
+        let mut spans: Vec<(u64, f64, f64)> = runs.iter().map(|r| (int(&r["worker"]), float(&r["start_ms"]), float(&r["end_ms"]))).collect();
+        assert!(spans.iter().all(|s| s.0 < threads && 0.0 <= s.1 && s.1 <= s.2 && s.2 <= wall));
+        spans.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        assert!(spans.windows(2).all(|w| w[0].0 != w[1].0 || w[0].2 <= w[1].1), "one worker ran two experiments at once");
+        for (r, e) in runs.iter().zip(experiments) {
+            assert_eq!(r["engine_checksum"], e["result"]["engine_checksum"]);
+        }
+    }
+
+    // a sweep experiment equals the same config submitted as a simulation
+    let e = experiments.iter().find(|e| e["scenario"] == "SorterOverload" && e["routing"] == "congestion" && e["policy"] == "edf" && e["capacity_pct"] == 70).unwrap();
+    let sim = submit(&app, "/api/simulations", json!({ "scenario": "SorterOverload", "routing": "congestion", "policy": "edf", "capacity_pct": 70, "bag_count": 5000 })).await;
+    let sim = wait_done(&app, &format!("/api/simulations/{sim}")).await;
+    assert_eq!(sim["engine_checksum"], e["result"]["engine_checksum"]);
+    assert_eq!(sim["dataset"]["checksum"], m["dataset"]["checksum"]);
+
+    // one thread only: nothing to compare, and the API says so
+    let id = submit(&app, "/api/sweeps", json!({ "scenarios": ["Normal"], "bag_count": 1000, "threads": [1] })).await;
+    wait_done(&app, &format!("/api/sweeps/{id}")).await;
+    let one = get(&app, &format!("/api/sweeps/{id}/metrics")).await;
+    assert_eq!(one["passes"].as_array().unwrap().len(), 1);
+    assert_eq!(one["consistency"], json!({ "checked": false, "compared_runs": 0, "all_identical": null }));
+
+    let hist = get(&app, "/api/history?kind=sweep").await;
+    assert_eq!(hist["items"].as_array().unwrap().len(), 2);
+    assert_eq!(hist["items"][1]["summary"]["experiment_count"], 24);
+
+    let bad = [
+        r#"{"scenarios": []}"#,
+        r#"{"scenarios": ["Blizzard"]}"#,
+        r#"{"routings": ["random"]}"#,
+        r#"{"policies": []}"#,
+        r#"{"capacity_pcts": []}"#,
+        r#"{"capacity_pcts": [19]}"#,
+        r#"{"bag_count": 999}"#,
+        r#"{"bag_count": 500001}"#,
+        r#"{"threads": [0]}"#,
+        r#"{"threads": [1,2,3,4,5,6,7,8,9]}"#,
+        r#"{"capacity_pcts": [100,90,80,70,60]}"#,
+        r#"{"bag_count": 500000, "capacity_pcts": [100,90,80,70], "threads": [2,4,8]}"#,
+        r#"{"backend": "rayon"}"#,
+    ];
+    for body in bad {
+        expect_error(&app, "POST", "/api/sweeps", Some(body), StatusCode::BAD_REQUEST, "invalid_request").await;
+    }
 }
 
 #[tokio::test]
@@ -378,5 +634,20 @@ async fn three_fixed_configs_keep_their_results() {
         let page = get(&app, &format!("/api/simulations/{id}/baggage?status=DELAYED&page_size=1")).await;
         assert_eq!(int(&page["total"]), delayed, "bag views must agree with the engine");
         println!("{scenario}/{routing}/{pct}%: delayed {rate}% checksum {checksum}");
+    }
+    // and inside a parallel sweep
+    let id = submit(&app, "/api/sweeps", json!({
+        "scenarios": ["Normal", "SorterOverload"], "routings": ["dijkstra", "ecmp", "congestion"], "policies": ["fcfs"],
+        "capacity_pcts": [100, 70], "bag_count": 250000, "threads": [4]
+    })).await;
+    wait_done(&app, &format!("/api/sweeps/{id}")).await;
+    let m = get(&app, &format!("/api/sweeps/{id}/metrics")).await;
+    assert_eq!(m["consistency"]["all_identical"], true);
+    for (scenario, routing, pct, delayed, _, checksum) in cases {
+        let e = m["experiments"].as_array().unwrap().iter()
+            .find(|e| e["scenario"] == scenario && e["routing"] == routing && e["capacity_pct"] == pct)
+            .unwrap();
+        assert_eq!(e["result"]["engine_checksum"], checksum, "sweep {scenario}/{routing}/{pct}");
+        assert_eq!(int(&e["result"]["delayed_bags"]), delayed);
     }
 }
