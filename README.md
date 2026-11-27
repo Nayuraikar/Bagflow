@@ -118,6 +118,7 @@ The measurements below were taken before the API's default `generate` chunk chan
 | Stage Explorer | Seven baggage stages: what each does, what can be parallel, what was measured, and what is not modelled |
 | Airport Network, Baggage Tracker, Congestion Analysis | One retained simulation: facilities, individual bags, queues over time |
 | Parallel Execution Studio | One workload, sequential against a backend, replayed from recorded task times |
+| Parallel Airport Operations (`/operations/parallel-operations`) | The same configuration run sequentially and in operational parallel mode: measured times, speedup, efficiency, a checksum match check, a replay of the recorded precompute tasks per worker, and which facilities are parallel or sequential |
 | Performance Lab, Backend Comparison | Live kernel benchmarks, plus saved results labelled Static with their machine |
 | Resource Profiler | **Planned.** Not built |
 | Scenario Studio, Simulation History | Run one configuration; reopen and compare saved runs |
@@ -148,6 +149,7 @@ With nothing saved, the five jobs took about 70 s in total on the M1 in one brow
 | R4 | Parallel Sweeps, Performance Lab, Backend Comparison |
 | R5 | Airport Network, Baggage Tracker, Congestion Analysis, Scenario Studio, Simulation History |
 | R6 | Guided Demo, narrow-screen and API-unreachable polish, this README |
+| R7 | Operational parallel mode in `engine2` (per-bag precompute on Rayon), its API options and pipeline phase, and the Parallel Airport Operations page |
 
 Not built: Resource Profiler, `POST /api/scenarios`, history delete and export, live MPI runs, memory and GPU utilisation figures. See `docs/AUDIT.md` section 12.
 
@@ -217,6 +219,34 @@ Quote this as **4.5x to 5.2x**, not as one number: each pass is timed once per s
 
 Three baseline jobs (250,086 bags): simulation took 692 to 701 ms, about 90% of the all-sequential sum. The parallelisable share was 9.8 to 9.9%, which gives an **Amdahl ceiling of 1.11x** for one pipeline run. The measured full-pipeline speedup was 1.08x. Both are computed from sums of separately timed phases, not from an end-to-end timing. Parallelism pays off in sweeps, where whole simulations run side by side.
 
+### Operational parallel mode
+
+An optional mode of `engine2` (`crates/bagflow-core/src/operational.rs`). Before the event loop, the independent per-bag work runs on a Rayon pool, split into contiguous bag ranges with at least 4 tasks per worker:
+
+- **Parallel:** check-in registration (each bag's arrival time), flight grouping (each bag's loading area), and, for dijkstra and ecmp routing without an edge outage, each bag's full route and its service time at every facility on it.
+- **Sequential, unchanged:** the event loop, every queue (screening and sorting included), server allocation and event order.
+- Congestion and deadline routing, and any routing in ConveyorFailure (an edge outage), precompute only check-in registration and flight grouping: their routes depend on live queues or time.
+
+Results are identical because the engine's random draws are a stateless hash of (seed, bag, stage), not a shared stream. The three pinned checksums (61aa19cce7723683, 144494908f029748, 29e8786b1e8e3fae) are reproduced for workers 1, 2, 4 and 8 (`crates/bagflow-core/tests/operational.rs`). Through the API: `"operational_parallel": true, "workers": N` on `POST /api/simulations`.
+
+M1 (Apple M1 MacBook Air), Normal / dijkstra / fcfs / 100%, stats only (no bag histories), median of 3, `operational_bench`. Load average was about 4.1, so the machine was not fully quiet. **Reported in session, not saved to `results/`.**
+
+| Bags | Workers | Precompute, sequential → parallel | Precompute speedup | Event loop | Whole-run speedup |
+|---|---|---|---|---|---|
+| 250,086 | 1 | 150 → 151 ms | 1.00x | about 496 to 500 ms | 1.05x |
+| 250,086 | 2 | 150 → 75 ms | 2.00x | about 496 to 500 ms | 1.18x |
+| 250,086 | 4 | 150 → 38 ms | 3.98x | about 496 to 500 ms | 1.29x |
+| 250,086 | 8 | 150 → 25 ms | 6.04x | about 496 to 500 ms | 1.32x |
+| 1,000,065 | 1 | 609 → 611 ms | 1.00x | -- | 1.07x |
+| 1,000,065 | 2 | 609 → 304 ms | 2.03x | -- | 1.20x |
+| 1,000,065 | 4 | 609 → 162 ms | 3.80x | -- | 1.28x |
+| 1,000,065 | 8 | 609 → 106 ms | 5.78x | -- | 1.32x |
+
+- The whole run gains only about 1.3x at 8 workers because the sequential event loop dominates (Amdahl: the precompute is about 23 to 24% of the work).
+- The 1.05x to 1.07x at 1 worker is not parallelism: the precompute itself is 1.00x there. The gain comes from moving per-bag work out of the loop.
+- The API path also records bag histories, which lengthens the loop and shrinks the speedup.
+- The 1M-bag checksum is not a pinned value.
+
 ### Batch kernel, 10M bags
 
 The kernel is a separate analysis of the bag table. **The simulation does not use its output.** Speedup is over the scalar loop on the same machine.
@@ -267,4 +297,5 @@ Do not compare times across the two machines as if they were one experiment.
 - Facility colours and the "congested" count are a display rule of the API, not engine output.
 - Server counts do not grow with the bag count, so more bags means more load unless you raise the server multiplier.
 - The web app has no automated tests.
+- Operational parallel mode parallelises only per-bag precompute; the event loop and all queues stay sequential, so the whole-run gain is about 1.3x at 8 workers. Its measurement was not on a fully quiet machine and is not saved to `results/`. The browser check covered only 100k bags with 4 workers.
 - On narrow screens, wide tables scroll sideways and the network graph is small: zoom in to read its labels.
