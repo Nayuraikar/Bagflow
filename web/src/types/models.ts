@@ -123,8 +123,15 @@ interface RunBase {
 
 export type SimulationRun = RunBase & { kind: 'simulation'; config: SimulationConfig; summary: SimulationSummary | null }
 /** `configHash` is equal for sweeps with the same settings. */
-export type SweepRun = RunBase & { kind: 'sweep'; configHash: string; bagCount: number; summary: SweepSummary | null }
-export type ParallelRun = RunBase & { kind: 'parallel'; workload: string; bagCount: number; summary: ParallelSummary | null }
+export type SweepRun = RunBase & { kind: 'sweep'; configHash: string; bagCount: number; config: SweepRequest; summary: SweepSummary | null }
+export type ParallelRun = RunBase & {
+  kind: 'parallel'
+  workload: string
+  bagCount: number
+  /** As requested, so a job can be recognised before it finishes. */
+  request: { backend: string; threads: number; repetitions: number; chunkSize: number }
+  summary: ParallelSummary | null
+}
 export type BenchmarkRun = RunBase & { kind: 'benchmark'; backends: string[]; bagCount: number; summary: BenchmarkSummary | null }
 export type Run = SimulationRun | SweepRun | ParallelRun | BenchmarkRun
 
@@ -139,8 +146,10 @@ export interface PipelinePhase {
   /** The parallel time where there is a parallel implementation, else the only time. */
   timeMs: number
   repetitions: number
+  /** The timed repetitions behind `timeMs`. */
+  samplesMs: number[]
   /** `null` when the phase has no parallel implementation. */
-  comparison: { sequentialBackend: string; sequentialMs: number; speedup: number; identical: boolean } | null
+  comparison: { sequentialBackend: string; sequentialMs: number; sequentialSamplesMs: number[]; speedup: number; identical: boolean } | null
   whySequential: string | null
   verifiedAgainstEngine: boolean | null
 }

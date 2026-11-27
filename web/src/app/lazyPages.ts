@@ -1,6 +1,7 @@
 import { lazy } from 'react'
 
 // these pages load when first opened, to keep the first download small
+export const GuidedDemoPage = lazy(() => import('../pages/GuidedDemoPage').then((m) => ({ default: m.GuidedDemoPage })))
 export const AirportNetworkPage = lazy(() => import('../pages/AirportNetworkPage').then((m) => ({ default: m.AirportNetworkPage })))
 export const BaggageTrackerPage = lazy(() => import('../pages/BaggageTrackerPage').then((m) => ({ default: m.BaggageTrackerPage })))
 export const CongestionPage = lazy(() => import('../pages/CongestionPage').then((m) => ({ default: m.CongestionPage })))

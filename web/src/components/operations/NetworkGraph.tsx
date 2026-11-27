@@ -181,7 +181,7 @@ export default function NetworkGraph(props: Props) {
 
   return (
     <div
-      ref={container} role="img" className="h-120 w-full"
+      ref={container} role="img" className="h-72 w-full sm:h-120"
       aria-label="Airport network graph, check-in on the left and loading areas on the right. The same details are available from the selection list."
     />
   )

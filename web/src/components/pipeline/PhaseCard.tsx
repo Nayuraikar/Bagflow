@@ -1,5 +1,6 @@
 import type { PipelinePhase } from '../../types/models'
 import { int, ms, times } from '../../utils/format'
+import { speedupRange } from '../../utils/spread'
 import { Card } from '../common/Card'
 import { StatusLabel } from '../common/StatusLabel'
 import { PHASE_COLOR, phaseMethod } from './phaseStyle'
@@ -23,6 +24,7 @@ export function PhaseCard({ phase, step }: { phase: PipelinePhase; step?: number
   const c = phase.comparison
   const color = PHASE_COLOR[phase.id]
   const max = Math.max(phase.timeMs, c?.sequentialMs ?? 0)
+  const spread = c && speedupRange(c.sequentialSamplesMs, phase.samplesMs)
   return (
     <Card className="flex flex-col gap-3">
       <div>
@@ -47,6 +49,13 @@ export function PhaseCard({ phase, step }: { phase: PipelinePhase; step?: number
             <span><strong className="font-mono">{times(c.speedup)}</strong> speedup in this phase</span>
             <StatusLabel status="Measured" />
           </div>
+          {spread?.repeated && (
+            <p className={`text-xs ${spread.noisy ? 'rounded-md border border-warning bg-warning/15 p-2' : 'text-muted'}`}>
+              {spread.noisy && <strong>Noisy. </strong>}
+              Pairing the shortest and longest repetitions gives <span className="font-mono">{times(spread.min)}</span> to{' '}
+              <span className="font-mono">{times(spread.max)}</span>.
+            </p>
+          )}
           <p className="text-xs text-muted">
             Median of {phase.repetitions} repetitions each, {int(phase.bags)} bags.{' '}
             {c.identical ? 'Output identical to the sequential one.' : 'Output differs from the sequential one.'}

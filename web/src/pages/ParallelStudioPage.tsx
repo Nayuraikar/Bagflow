@@ -71,7 +71,13 @@ export function ParallelStudioPage() {
 
   let result
   if (!runId) {
-    result = <Card><p className="text-sm text-muted">{EMPTY} No run selected. Choose a workload and press Measure.</p></Card>
+    result = (
+      <Card>
+        <p className="text-sm text-muted">
+          {EMPTY} {offline ? 'The API is not connected, so no run can be shown or measured.' : 'No run selected. Choose a workload and press Measure.'}
+        </p>
+      </Card>
+    )
   } else if (!m || m.id !== runId) {
     result = (
       <JobState

@@ -90,7 +90,7 @@ export function toRun(w: WireHistoryItem): Run {
       return { ...base, kind: w.kind, config: toSimConfig(w.config), summary: w.summary && toSummary(w.summary) }
     case 'sweep':
       return {
-        ...base, kind: w.kind, configHash: w.config_hash, bagCount: w.config.bag_count,
+        ...base, kind: w.kind, configHash: w.config_hash, bagCount: w.config.bag_count, config: toSweepRequest(w.config),
         summary: w.summary && {
           experimentCount: w.summary.experiment_count,
           passes: w.summary.passes.map((p) => ({ threads: p.threads, wallMs: p.wall_ms, speedup: p.speedup })),
@@ -104,6 +104,7 @@ export function toRun(w: WireHistoryItem): Run {
     case 'parallel':
       return {
         ...base, kind: w.kind, workload: w.config.workload, bagCount: w.config.bag_count,
+        request: { backend: w.config.backend, threads: w.config.threads, repetitions: w.config.repetitions, chunkSize: w.config.chunk_size },
         summary: w.summary && {
           workload: w.summary.workload, backend: w.summary.backend, threads: w.summary.threads, bags: w.summary.bags,
           wallMs: w.summary.wall_ms, speedup: w.summary.speedup, matchesSequential: w.summary.matches_sequential,
@@ -131,9 +132,10 @@ const toPhase = (w: WirePhase): PipelinePhase => ({
   bags: w.bags,
   timeMs: w.time_ms,
   repetitions: w.samples_ms.length,
+  samplesMs: w.samples_ms,
   comparison:
     w.baseline && w.speedup !== null && w.identical_to_baseline !== null
-      ? { sequentialBackend: w.baseline.backend, sequentialMs: w.baseline.time_ms, speedup: w.speedup, identical: w.identical_to_baseline }
+      ? { sequentialBackend: w.baseline.backend, sequentialMs: w.baseline.time_ms, sequentialSamplesMs: w.baseline.samples_ms, speedup: w.speedup, identical: w.identical_to_baseline }
       : null,
   whySequential: w.why_sequential ?? null,
   verifiedAgainstEngine: w.verified_against_engine ?? null,

@@ -11,6 +11,8 @@ export interface ParallelRequest {
   threads: number
   bagCount: number
   repetitions: number
+  /** Flights per task for `generate`, bags per task otherwise. The API's default when absent. */
+  chunkSize?: number
 }
 
 export interface Task {

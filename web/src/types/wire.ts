@@ -130,8 +130,8 @@ interface WireRecordBase {
 export type WireHistoryItem = WireRecordBase &
   (
     | { kind: 'simulation'; config: WireSimConfig; summary: WireSimSummary | null }
-    | { kind: 'sweep'; config: { bag_count: number }; summary: WireSweepSummary | null }
-    | { kind: 'parallel'; config: { workload: string; bag_count: number }; summary: WireParallelSummary | null }
+    | { kind: 'sweep'; config: WireSweepConfig; summary: WireSweepSummary | null }
+    | { kind: 'parallel'; config: { workload: string; bag_count: number; backend: string; threads: number; repetitions: number; chunk_size: number }; summary: WireParallelSummary | null }
     | { kind: 'benchmark'; config: { bag_count: number; backends: string[] }; summary: WireBenchSummary | null }
   )
 

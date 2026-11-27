@@ -15,11 +15,21 @@ function Row({ label, span, children }: { label: string; span: number; children:
   )
 }
 
-function Block({ from, to, span, color, title }: { from: number; to: number; span: number; color: string; title: string }) {
+/** Above this many tasks, the gaps between blocks would hide the blocks themselves. */
+const MAX_SEPARATED_TASKS = 200
+
+function Block({ from, to, span, color, title, separated = true }: {
+  from: number
+  to: number
+  span: number
+  color: string
+  title: string
+  separated?: boolean
+}) {
   return (
     <div
       title={title}
-      className="absolute inset-y-0.5 overflow-hidden rounded-[2px] border-r border-surface"
+      className={`absolute inset-y-0.5 overflow-hidden ${separated ? 'rounded-[2px] border-r border-surface' : ''}`}
       style={{ left: left(from, span), width: left(to - from, span), minWidth: 1, background: color }}
     />
   )
@@ -34,7 +44,10 @@ const Bars = memo(function Bars({ run, span }: { run: Execution; span: number })
       {run.workers.map((w) => (
         <Row key={w.worker} label={`thread ${w.worker}`} span={span}>
           {run.tasks.filter((t) => t.worker === w.worker).map((t) => (
-            <Block key={t.id} from={t.startMs} to={t.endMs} span={span} color={workerColor(w.worker)} title={taskTitle(t)} />
+            <Block
+              key={t.id} from={t.startMs} to={t.endMs} span={span} color={workerColor(w.worker)} title={taskTitle(t)}
+              separated={run.tasks.length <= MAX_SEPARATED_TASKS}
+            />
           ))}
         </Row>
       ))}

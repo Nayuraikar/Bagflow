@@ -50,6 +50,8 @@ const toMetrics = (w: WireParallelMetrics): ParallelMetrics => ({
 export const createParallelRun = (r: ParallelRequest) =>
   postJson<{ id: string }>('/api/parallel-runs', {
     workload: r.workload, backend: r.backend, threads: r.threads, bag_count: r.bagCount, repetitions: r.repetitions,
+    // JSON leaves out undefined values
+    chunk_size: r.chunkSize,
   })
 
 export const getParallelJob = async (id: string): Promise<ParallelJob> => {

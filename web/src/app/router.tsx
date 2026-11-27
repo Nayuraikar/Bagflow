@@ -16,9 +16,11 @@ import {
   ParallelSweepsPage,
   PerformanceLabPage,
   BackendComparisonPage,
+  GuidedDemoPage,
 } from './lazyPages'
 
 const BUILT: Record<string, ReactElement> = {
+  '/guided-demo': <GuidedDemoPage />,
   '/operations/network': <AirportNetworkPage />,
   '/operations/baggage': <BaggageTrackerPage />,
   '/operations/congestion': <CongestionPage />,

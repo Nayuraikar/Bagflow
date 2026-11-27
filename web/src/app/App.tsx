@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from 'react-router/dom'
+import { DemoProvider } from './DemoProvider'
 import { JobProvider } from './JobProvider'
 import { RunSelectionProvider } from './RunSelectionProvider'
 import { router } from './router'
@@ -13,7 +14,9 @@ export const App = () => (
   <QueryClientProvider client={queryClient}>
     <JobProvider>
       <RunSelectionProvider>
-        <RouterProvider router={router} />
+        <DemoProvider>
+          <RouterProvider router={router} />
+        </DemoProvider>
       </RunSelectionProvider>
     </JobProvider>
   </QueryClientProvider>

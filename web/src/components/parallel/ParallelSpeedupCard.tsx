@@ -1,7 +1,9 @@
 import type { ParallelMetrics } from '../../types/parallel'
 import { int, msFine, times } from '../../utils/format'
+import { speedupRange } from '../../utils/spread'
 import { busyMs, maxConcurrent } from '../../utils/telemetry'
 import { Card, CardTitle } from '../common/Card'
+import { NoiseWarning } from '../common/NoiseWarning'
 import { StatusLabel } from '../common/StatusLabel'
 import { Stat } from './Stat'
 
@@ -57,6 +59,16 @@ function Why({ m }: { m: ParallelMetrics }) {
   )
 }
 
+function SpeedupSpread({ m }: { m: ParallelMetrics }) {
+  const r = speedupRange(m.sequential.samplesMs, m.selected.samplesMs)
+  if (!r) return null
+  if (!r.repeated) return <NoiseWarning>One repetition per side, so there is no spread to show. Treat this speedup as a single sample.</NoiseWarning>
+  const text = <>Pairing the shortest and longest repetitions gives a speedup from <span className="font-mono">{times(r.min)}</span> to <span className="font-mono">{times(r.max)}</span>.</>
+  return r.noisy
+    ? <NoiseWarning><strong>Noisy timings.</strong> {text} Do not read the median speedup as exact.</NoiseWarning>
+    : <p className="text-sm text-muted">{text}</p>
+}
+
 export function ParallelSpeedupCard({ m }: { m: ParallelMetrics }) {
   return (
     <Card className="space-y-3">
@@ -69,6 +81,7 @@ export function ParallelSpeedupCard({ m }: { m: ParallelMetrics }) {
         />
         <Stat label="Speedup (sequential ÷ selected)" value={times(m.speedup)} />
       </dl>
+      <SpeedupSpread m={m} />
       <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
         <span>
           Same input ({int(m.bags)} bags). {int(m.repetitions)} timed repetitions per side, alternating, after one warm-up each. Each wall time is

@@ -43,13 +43,13 @@ export default function PipelineTotals({ pipeline }: { pipeline: Pipeline }) {
         </ResponsiveContainer>
       </div>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-120 text-sm">
+        <table className="w-full text-sm">
           <thead className="text-muted">
             <tr>
               <th className="border-b border-line py-1.5 text-left font-medium">Phase</th>
               <th className="border-b border-line py-1.5 text-right font-medium">All sequential</th>
-              <th className="border-b border-line py-1.5 text-right font-medium">With parallel phases</th>
-              <th className="border-b border-line py-1.5 pl-3 text-right font-medium">Source</th>
+              <th className="border-b border-line py-1.5 pl-3 text-right font-medium">With parallel phases</th>
+              <th className="border-b border-line py-1.5 pl-3 text-right font-medium max-sm:hidden">Source</th>
             </tr>
           </thead>
           <tbody>
@@ -58,14 +58,14 @@ export default function PipelineTotals({ pipeline }: { pipeline: Pipeline }) {
                 <td className="py-1">{s.name}</td>
                 <td className="py-1 text-right font-mono">{ms(s.sequential)}</td>
                 <td className="py-1 text-right font-mono">{ms(s.parallel)}</td>
-                <td className="py-1 pl-3 text-right"><StatusLabel status="Measured" /></td>
+                <td className="py-1 pl-3 text-right max-sm:hidden"><StatusLabel status="Measured" /></td>
               </tr>
             ))}
             <tr className="border-t border-line font-semibold">
               <td className="py-1.5">Sum of phase times</td>
               <td className="py-1.5 text-right font-mono">{ms(pipeline.full.baselineMs)}</td>
               <td className="py-1.5 text-right font-mono">{ms(pipeline.full.parallelMs)}</td>
-              <td className="py-1.5 pl-3 text-right"><StatusLabel status="Measured" /></td>
+              <td className="py-1.5 pl-3 text-right max-sm:hidden"><StatusLabel status="Measured" /></td>
             </tr>
           </tbody>
         </table>
