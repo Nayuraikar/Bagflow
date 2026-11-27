@@ -1,0 +1,74 @@
+# Apple M1 (MacBook Air, fanless), 8 GB, rustc 1.100.0 (0ef1bc386 2026-11-09). 2026-11-27 10:06 +0530. Load at start:  2.92 2.40 2.17. Now drawing from 'AC Power'
+# Command: target/release/bagflow-kernels 10000000 (3 separate processes, each best of 10)
+## run 1
+deadline-risk kernel: 10000168 bags, 8 logical cores, best of 10
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   14.07         711      7.1     1.00x  identical
+ilp (x4)                 13.05         766      7.7     1.08x  identical
+neon                      6.71        1491     14.9     2.10x  identical
+openmp-8                  4.32        2314     23.1     3.26x  identical
+
+Metal GPU: Apple M1  (shared buffers: copy in/out is a memcpy, as in a straight port)
+metal kernel (GPU)            3.45        2896     29.0     4.07x
+metal kernel (wall)           4.09        2443     24.4     3.44x
+metal + copy in/out           7.46        1341     13.4     1.89x
+copy in 3.05 ms, copy out + reduce 0.26 ms, output identical
+
+rayon-1+ilp              13.07         765      7.7     1.08x  identical
+rayon-1+neon              6.73        1486     14.9     2.09x  identical
+rayon-2+ilp               6.59        1517     15.2     2.13x  identical
+rayon-2+neon              3.41        2935     29.3     4.13x  identical
+rayon-4+ilp               3.34        2997     30.0     4.22x  identical
+rayon-4+neon              1.82        5488     54.9     7.72x  identical
+rayon-8+ilp               2.32        4319     43.2     6.08x  identical
+rayon-8+neon              1.96        5115     51.1     7.20x  identical
+## run 2
+deadline-risk kernel: 10000168 bags, 8 logical cores, best of 10
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   14.07         711      7.1     1.00x  identical
+ilp (x4)                 13.05         766      7.7     1.08x  identical
+neon                      6.71        1491     14.9     2.10x  identical
+openmp-8                  4.29        2332     23.3     3.28x  identical
+
+Metal GPU: Apple M1  (shared buffers: copy in/out is a memcpy, as in a straight port)
+metal kernel (GPU)            3.45        2900     29.0     4.08x
+metal kernel (wall)           4.05        2471     24.7     3.48x
+metal + copy in/out           7.35        1361     13.6     1.91x
+copy in 2.98 ms, copy out + reduce 0.26 ms, output identical
+
+rayon-1+ilp              13.07         765      7.6     1.08x  identical
+rayon-1+neon              6.73        1486     14.9     2.09x  identical
+rayon-2+ilp               6.59        1517     15.2     2.13x  identical
+rayon-2+neon              3.41        2932     29.3     4.12x  identical
+rayon-4+ilp               3.34        2991     29.9     4.21x  identical
+rayon-4+neon              1.99        5031     50.3     7.08x  identical
+rayon-8+ilp               2.52        3961     39.6     5.57x  identical
+rayon-8+neon              1.99        5032     50.3     7.08x  identical
+## run 3
+deadline-risk kernel: 10000168 bags, 8 logical cores, best of 10
+classes on-track / at-risk / critical: [7172190, 1944284, 883694], slack sum 27835824747
+
+backend                time ms    M bags/s     GB/s   speedup  output
+scalar                   14.11         709      7.1     1.00x  identical
+ilp (x4)                 13.04         767      7.7     1.08x  identical
+neon                      6.71        1490     14.9     2.10x  identical
+openmp-8                  4.28        2336     23.4     3.30x  identical
+
+Metal GPU: Apple M1  (shared buffers: copy in/out is a memcpy, as in a straight port)
+metal kernel (GPU)            3.45        2902     29.0     4.10x
+metal kernel (wall)           4.14        2418     24.2     3.41x
+metal + copy in/out           7.39        1354     13.5     1.91x
+copy in 2.98 ms, copy out + reduce 0.25 ms, output identical
+
+rayon-1+ilp              13.06         766      7.7     1.08x  identical
+rayon-1+neon              6.73        1486     14.9     2.10x  identical
+rayon-2+ilp               6.58        1519     15.2     2.14x  identical
+rayon-2+neon              3.40        2939     29.4     4.15x  identical
+rayon-4+ilp               3.35        2988     29.9     4.22x  identical
+rayon-4+neon              1.98        5050     50.5     7.13x  identical
+rayon-8+ilp               2.48        4025     40.2     5.68x  identical
+rayon-8+neon              1.95        5140     51.4     7.25x  identical

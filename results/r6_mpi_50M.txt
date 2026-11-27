@@ -1,0 +1,26 @@
+# Apple M1 (MacBook Air, fanless), 8 GB, rustc 1.100.0 (0ef1bc386 2026-11-09). 2026-11-27 10:07 +0530. Load at start:  2.22 2.31 2.15. Now drawing from 'AC Power'
+# Command: scripts/run_mpi.sh results/bags_seed42.bin 8 (2 times)
+## run 1
+mode     ranks    load ms  compute ms  reduce ms   compute   end-to-end  result
+read         1      202.4       74.01      0.000     1.00x        1.00x  identical
+read         2       51.1       36.98      0.001     2.00x        3.14x  identical
+read         4       42.2       18.50      0.002     4.00x        4.55x  identical
+read         8       33.6       11.95      0.006     6.19x        6.07x  identical
+scatter      1      291.9       74.04      0.000     1.00x        1.00x  identical
+scatter      2      139.7       36.97      0.000     2.00x        2.07x  identical
+scatter      4      149.1       20.93      0.002     3.54x        2.15x  identical
+scatter      8      302.1       16.50      0.006     4.49x        1.15x  identical
+
+bags: on-track / at-risk / critical / slack sum = 35861889 9721115 4417095 139195725044
+## run 2
+mode     ranks    load ms  compute ms  reduce ms   compute   end-to-end  result
+read         1       71.6       73.94      0.000     1.00x        1.00x  identical
+read         2       48.6       38.47      0.001     1.92x        1.67x  identical
+read         4       34.8       18.52      0.002     3.99x        2.73x  identical
+read         8       28.8       12.56      0.003     5.89x        3.52x  identical
+scatter      1      236.8       74.03      0.000     1.00x        1.00x  identical
+scatter      2      138.6       36.98      0.002     2.00x        1.77x  identical
+scatter      4      150.3       20.95      0.004     3.53x        1.81x  identical
+scatter      8      283.5       16.89      0.004     4.38x        1.03x  identical
+
+bags: on-track / at-risk / critical / slack sum = 35861889 9721115 4417095 139195725044

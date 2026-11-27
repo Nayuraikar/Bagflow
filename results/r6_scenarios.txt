@@ -1,0 +1,59 @@
+# Apple M1 (MacBook Air, fanless), 8 GB, rustc 1.100.0 (0ef1bc386 2026-11-09). 2026-11-27 10:08 +0530. Load at start:  2.76 2.50 2.24. Now drawing from 'AC Power'
+# Command: target/release/scenarios 250000 100
+scenario comparison: 250086 base bags, servers 100%, seed 42, window 17:00-19:00
+
+scenario        routing     queue      bags   delayed  tight delayed   mean s    p95 s  max queue
+Normal          dijkstra    fcfs     250086     3.70%          7.42%      807     2395       9743
+Normal          dijkstra    edf      250086     0.00%          0.00%      804     3654       9724
+Normal          ecmp        fcfs     250086     3.69%          7.39%      806     2379       9743
+Normal          ecmp        edf      250086     0.00%          0.00%      803     3652       9724
+Normal          congestion  fcfs     250086     3.25%          7.23%      796     2117       8437
+Normal          congestion  edf      250086     0.00%          0.00%      794     3582       8326
+Normal          deadline    fcfs     250086     3.34%          7.42%      804     2151       8591
+Normal          deadline    edf      250086     0.00%          0.00%      801     3599       8581
+
+PeakSurge       dijkstra    fcfs     262182    16.42%         20.89%     1471     4708      18029
+PeakSurge       dijkstra    edf      262182    13.69%         14.44%     1469     5743      17892
+PeakSurge       ecmp        fcfs     262182    16.41%         20.88%     1470     4696      18029
+PeakSurge       ecmp        edf      262182    13.68%         14.45%     1468     5741      17892
+PeakSurge       congestion  fcfs     262182    16.38%         20.86%     1459     4325      16803
+PeakSurge       congestion  edf      262182    14.45%         14.89%     1457     5630      16638
+PeakSurge       deadline    fcfs     262182    16.52%         20.95%     1467     4435      16956
+PeakSurge       deadline    edf      262182    14.14%         14.92%     1466     5649      16720
+
+ConveyorFailure dijkstra    fcfs     250086     3.70%          7.42%      808     2395       9743
+ConveyorFailure dijkstra    edf      250086     0.00%          0.00%      804     3654       9724
+ConveyorFailure ecmp        fcfs     250086     3.69%          7.39%      807     2379       9743
+ConveyorFailure ecmp        edf      250086     0.00%          0.00%      803     3653       9724
+ConveyorFailure congestion  fcfs     250086     3.25%          7.23%      796     2117       8437
+ConveyorFailure congestion  edf      250086     0.00%          0.00%      794     3583       8326
+ConveyorFailure deadline    fcfs     250086     3.34%          7.42%      805     2151       8591
+ConveyorFailure deadline    edf      250086     0.00%          0.00%      802     3600       8581
+
+ScreeningDelay  dijkstra    fcfs     250086    17.94%         20.52%     1514     5634      21169
+ScreeningDelay  dijkstra    edf      250086    20.62%         21.04%     1507     6666      21113
+ScreeningDelay  ecmp        fcfs     250086    17.93%         20.49%     1513     5619      21169
+ScreeningDelay  ecmp        edf      250086    20.62%         21.04%     1506     6664      21113
+ScreeningDelay  congestion  fcfs     250086    16.50%         20.84%     1466     4583      16531
+ScreeningDelay  congestion  edf      250086    16.30%         16.85%     1465     5847      16488
+ScreeningDelay  deadline    fcfs     250086    17.54%         20.66%     1488     5312      20012
+ScreeningDelay  deadline    edf      250086    19.77%         19.59%     1482     6348      19978
+
+ConnectingRush  dijkstra    fcfs     250086     4.43%         21.94%      807     2395       9743
+ConnectingRush  dijkstra    edf      250086     0.00%          0.00%      803     3713       9724
+ConnectingRush  ecmp        fcfs     250086     4.42%         21.91%      806     2379       9743
+ConnectingRush  ecmp        edf      250086     0.00%          0.00%      803     3711       9724
+ConnectingRush  congestion  fcfs     250086     3.75%         18.13%      796     2117       8437
+ConnectingRush  congestion  edf      250086     0.00%          0.00%      792     3646       8298
+ConnectingRush  deadline    fcfs     250086     3.95%         20.01%      804     2151       8591
+ConnectingRush  deadline    edf      250086     0.00%          0.00%      801     3660       8581
+
+SorterOverload  dijkstra    fcfs     250086    11.45%         14.48%     1150     4458      17136
+SorterOverload  dijkstra    edf      250086     8.51%          8.82%     1144     5225      16989
+SorterOverload  ecmp        fcfs     250086    11.44%         14.46%     1149     4443      17136
+SorterOverload  ecmp        edf      250086     8.51%          8.82%     1143     5223      16989
+SorterOverload  congestion  fcfs     250086     6.17%         10.60%      978     3263       8450
+SorterOverload  congestion  edf      250086     0.00%          0.00%      920     4038       8316
+SorterOverload  deadline    fcfs     250086     9.67%         12.15%     1086     4063      15712
+SorterOverload  deadline    edf      250086     5.67%          5.79%     1068     4843      15590
+

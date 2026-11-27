@@ -1,0 +1,29 @@
+# Apple M1 (MacBook Air, fanless), 8 GB, rustc 1.100.0 (0ef1bc386 2026-11-09). 2026-11-27 10:02 +0530. Load at start:  2.33 2.41 2.14. Now drawing from 'AC Power'
+# Command: target/release/bagflow-sim gen --bags 10000000 --mode bench (3 separate processes)
+## run 1
+benchmark: 10000000 bags, seed 42, 8 logical cores
+
+backend     time (s)        bags/s   speedup  efficiency  output
+seq            3.141       3183921     1.00x           -  checksum 2fa040bc2723a302
+rayon-1        3.948       2532691     0.80x         80%  identical
+rayon-2        1.967       5084577     1.60x         80%  identical
+rayon-4        1.004       9956768     3.13x         78%  identical
+rayon-8        0.617      16211492     5.09x         64%  identical
+## run 2
+benchmark: 10000000 bags, seed 42, 8 logical cores
+
+backend     time (s)        bags/s   speedup  efficiency  output
+seq            3.011       3321367     1.00x           -  checksum 2fa040bc2723a302
+rayon-1        4.052       2467928     0.74x         74%  identical
+rayon-2        1.988       5031275     1.51x         76%  identical
+rayon-4        1.026       9747873     2.93x         73%  identical
+rayon-8        0.623      16046523     4.83x         60%  identical
+## run 3
+benchmark: 10000000 bags, seed 42, 8 logical cores
+
+backend     time (s)        bags/s   speedup  efficiency  output
+seq            2.985       3349989     1.00x           -  checksum 2fa040bc2723a302
+rayon-1        4.004       2497389     0.75x         75%  identical
+rayon-2        1.974       5066269     1.51x         76%  identical
+rayon-4        1.029       9718663     2.90x         73%  identical
+rayon-8        0.629      15890118     4.74x         59%  identical

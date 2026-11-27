@@ -1,0 +1,26 @@
+# Apple M1 (MacBook Air, fanless), 8 GB, rustc 1.100.0 (0ef1bc386 2026-11-09). 2026-11-27 10:14 +0530. Load at start: 3.56 2.88 2.46. Now drawing from 'AC Power'
+# Measured through the live API (release build). Jobs run one at a time. Debug build: False
+
+## Pinned engine configs (250,086 bags, fcfs, servers x1)
+Normal/dijkstra/fcfs/100%: delayed 9245 = 3.697%  engine_checksum 61aa19cce7723683
+SorterOverload/ecmp/fcfs/100%: delayed 28606 = 11.438%  engine_checksum 144494908f029748
+Normal/congestion/fcfs/70%: delayed 134427 = 53.752%  engine_checksum 29e8786b1e8e3fae
+
+## Pipeline, baseline Normal/dijkstra/fcfs/100%, 3 jobs (phase times in ms; full speedup is a ratio of sums of phase times)
+job 1: generate 14.3 (baseline 68.2, 4.76x, rayon); classify 0.1 (baseline 0.4, 2.54x, rayon-neon); simulate 701.1; aggregate 1.4 (baseline 7.9, 5.44x, rayon); p=9.8%; amdahl ceiling 1.109x; full pipeline 1.084x
+job 2: generate 14.4 (baseline 67.9, 4.73x, rayon); classify 0.1 (baseline 0.4, 2.53x, rayon-neon); simulate 692.3; aggregate 1.4 (baseline 7.9, 5.46x, rayon); p=9.9%; amdahl ceiling 1.110x; full pipeline 1.085x
+job 3: generate 14.5 (baseline 67.8, 4.67x, rayon); classify 0.1 (baseline 0.4, 2.55x, rayon-neon); simulate 696.5; aggregate 1.4 (baseline 7.9, 5.46x, rayon); p=9.8%; amdahl ceiling 1.109x; full pipeline 1.084x
+
+## Parallel runs, 10M bags requested (median wall and min-max of repetitions, ms)
+generate, demo chunk, job 1: bags 10000168, chunk 64 flights, 5 reps, 8 threads | sequential 2890.44 [2871.42-3060.30] | rayon 781.85 [686.77-1020.41] | speedup 3.70x, pairing extremes 2.81x-4.46x | matches sequential True
+generate, demo chunk, job 2: bags 10000168, chunk 64 flights, 5 reps, 8 threads | sequential 2948.75 [2867.43-3122.26] | rayon 964.63 [678.42-1417.92] | speedup 3.06x, pairing extremes 2.02x-4.60x | matches sequential True
+generate, demo chunk, job 3: bags 10000168, chunk 64 flights, 5 reps, 8 threads | sequential 3540.46 [3055.62-8758.98] | rayon 1200.72 [712.44-2227.39] | speedup 2.95x, pairing extremes 1.37x-12.29x | matches sequential True
+generate, API default chunk: bags 10000168, chunk 1042 flights, 5 reps, 8 threads | sequential 2943.75 [2891.98-3296.61] | rayon 1426.01 [1418.91-1522.42] | speedup 2.06x, pairing extremes 1.90x-2.32x | matches sequential True
+classify, job 1: bags 10000168, chunk 156250 bags, 10 reps, 8 threads | scalar 14.17 [14.15-16.00] | rayon-neon 2.15 [2.07-2.27] | speedup 6.59x, pairing extremes 6.22x-7.75x | matches sequential True
+classify, job 2: bags 10000168, chunk 156250 bags, 10 reps, 8 threads | scalar 14.19 [14.14-16.54] | rayon-neon 2.23 [2.05-3.69] | speedup 6.37x, pairing extremes 3.83x-8.09x | matches sequential True
+classify, job 3: bags 10000168, chunk 156250 bags, 10 reps, 8 threads | scalar 14.16 [14.11-16.02] | rayon-neon 2.19 [2.02-2.49] | speedup 6.47x, pairing extremes 5.67x-7.94x | matches sequential True
+
+## Sweep: 6 scenarios x 4 routings x 4 policies x 100% = 96 experiments, 100,000 bags requested each, 3 identical sweeps
+sweep 1: 1 thr wall 24544 ms, speedup 1.00x, efficiency 100.0%; 8 thr wall 4718 ms, speedup 5.20x, efficiency 65.0%; compared 96, all identical True
+sweep 2: 1 thr wall 24233 ms, speedup 1.00x, efficiency 100.0%; 8 thr wall 4742 ms, speedup 5.11x, efficiency 63.9%; compared 96, all identical True
+sweep 3: 1 thr wall 25265 ms, speedup 1.00x, efficiency 100.0%; 8 thr wall 5607 ms, speedup 4.51x, efficiency 56.3%; compared 96, all identical True
