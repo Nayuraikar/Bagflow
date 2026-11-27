@@ -103,38 +103,53 @@ struct Ctx {
     cudaEvent_t e0, e1;
 };
 
+extern "C" void bf_cuda_destroy(void* p);
+
 static double now_s() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 extern "C" {
 
+// Returns null if this machine cannot run the kernels, with the reason in the name buffer.
+// Nothing here may exit: the API calls this to find out whether CUDA is available.
 void* bf_cuda_create(size_t cap, char* name, size_t name_len) {
+    auto fail = [&](const char* what, const char* detail) -> void* {
+        if (name && name_len > 0) snprintf(name, name_len, "%s%s", what, detail);
+        return nullptr;
+    };
     int cnt = 0;
-    if (cudaGetDeviceCount(&cnt) != cudaSuccess || cnt == 0) return nullptr;
+    cudaError_t err = cudaGetDeviceCount(&cnt);
+    if (err != cudaSuccess) return fail("no usable CUDA device: ", cudaGetErrorString(err));
+    if (cnt == 0) return fail("no CUDA device found", "");
+    cudaDeviceProp prop;
+    err = cudaGetDeviceProperties(&prop, 0);
+    if (err != cudaSuccess) return fail("cannot read the CUDA device: ", cudaGetErrorString(err));
+    // the kernels are built for compute capability 7.5 and later
+    if (prop.major * 10 + prop.minor < 75) return fail("the GPU is older than compute capability 7.5: ", prop.name);
     if (cap == 0) cap = 1;
-    Ctx* c = new Ctx();
+    Ctx* c = new Ctx();  // zeroed, so a partly built one can be destroyed
     c->cap = cap;
-    CK(cudaMalloc(&c->arr, cap * 4));
-    CK(cudaMalloc(&c->dl, cap * 4));
-    CK(cudaMalloc(&c->fl, cap));
-    CK(cudaMalloc(&c->out, cap));
-    CK(cudaMalloc(&c->acc, 3 * sizeof(ull)));
-    CK(cudaEventCreate(&c->e0));
-    CK(cudaEventCreate(&c->e1));
-    if (name && name_len > 0) {
-        cudaDeviceProp p;
-        CK(cudaGetDeviceProperties(&p, 0));
-        strncpy(name, p.name, name_len - 1);
-        name[name_len - 1] = 0;
+    err = cudaMalloc(&c->arr, cap * 4);
+    if (err == cudaSuccess) err = cudaMalloc(&c->dl, cap * 4);
+    if (err == cudaSuccess) err = cudaMalloc(&c->fl, cap);
+    if (err == cudaSuccess) err = cudaMalloc(&c->out, cap);
+    if (err == cudaSuccess) err = cudaMalloc(&c->acc, 3 * sizeof(ull));
+    if (err == cudaSuccess) err = cudaEventCreate(&c->e0);
+    if (err == cudaSuccess) err = cudaEventCreate(&c->e1);
+    if (err != cudaSuccess) {
+        bf_cuda_destroy(c);
+        return fail("could not set up the CUDA device: ", cudaGetErrorString(err));
     }
+    if (name && name_len > 0) snprintf(name, name_len, "%s", prop.name);
     return c;
 }
 
 void bf_cuda_destroy(void* p) {
     Ctx* c = (Ctx*)p;
     cudaFree(c->arr); cudaFree(c->dl); cudaFree(c->fl); cudaFree(c->out); cudaFree(c->acc);
-    cudaEventDestroy(c->e0); cudaEventDestroy(c->e1);
+    if (c->e0) cudaEventDestroy(c->e0);
+    if (c->e1) cudaEventDestroy(c->e1);
     delete c;
 }
 

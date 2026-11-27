@@ -93,9 +93,10 @@ impl Backend {
             Backend::Scalar | Backend::Ilp | Backend::RayonIlp => Ok(String::new()),
             Backend::Neon | Backend::RayonNeon => neon(),
             Backend::Avx2 | Backend::RayonAvx2 => avx2(),
-            Backend::OpenMp => match omp_threads() {
-                1 => Ok("1 thread (built without OpenMP, or limited to one thread)".to_string()),
-                t => Ok(format!("{t} threads")),
+            Backend::OpenMp => match (omp_missing_reason(), omp_threads()) {
+                (Some(reason), _) => Err(format!("OpenMP was not built: {reason}")),
+                (None, 1) => Ok("1 thread".to_string()),
+                (None, t) => Ok(format!("{t} threads")),
             },
             Backend::Metal => metal_device(),
             Backend::CudaNaive | Backend::CudaWarp | Backend::CudaPtx => cuda_device(),
@@ -107,19 +108,29 @@ impl Backend {
 fn metal_device() -> Result<String, String> {
     #[cfg(has_metal)]
     {
-        metal::Metal::new(1).map(|m| m.name.clone()).ok_or_else(|| "no Metal device found".to_string())
+        metal::Metal::new(1).map(|m| m.name.clone())
     }
     #[cfg(not(has_metal))]
-    Err("Metal is only built on macOS".to_string())
+    Err(metal_not_built())
 }
 
 fn cuda_device() -> Result<String, String> {
     #[cfg(has_cuda)]
     {
-        cuda::Cuda::new(1).map(|c| c.name.clone()).ok_or_else(|| "no CUDA device found".to_string())
+        cuda::Cuda::new(1).map(|c| c.name.clone())
     }
     #[cfg(not(has_cuda))]
-    Err("CUDA was not built (needs Linux with nvcc)".to_string())
+    Err(cuda_not_built())
+}
+
+#[cfg(not(has_metal))]
+fn metal_not_built() -> String {
+    format!("Metal was not built: {}", option_env!("BAGFLOW_METAL_REASON").unwrap_or("no reason recorded"))
+}
+
+#[cfg(not(has_cuda))]
+fn cuda_not_built() -> String {
+    format!("CUDA was not built: {}", option_env!("BAGFLOW_CUDA_REASON").unwrap_or("no reason recorded"))
 }
 
 /// Wall time of one repetition, in seconds, split into phases for GPU backends.
@@ -190,14 +201,14 @@ pub fn gpu_session(backend: Backend, bags: usize) -> Result<GpuSession, String> 
         Backend::Metal => {
             #[cfg(has_metal)]
             {
-                let m = metal::Metal::new(bags).ok_or("could not create Metal buffers")?;
+                let m = metal::Metal::new(bags)?;
                 Ok(Box::new(move |i: Input, o: &mut [u8]| {
                     let (r, t) = m.run(i.arrival, i.deadline, i.flags, o);
                     (r, GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download })
                 }))
             }
             #[cfg(not(has_metal))]
-            Err("Metal is only built on macOS".to_string())
+            Err(metal_not_built())
         }
         Backend::CudaNaive | Backend::CudaWarp | Backend::CudaPtx => {
             #[cfg(has_cuda)]
@@ -207,14 +218,14 @@ pub fn gpu_session(backend: Backend, bags: usize) -> Result<GpuSession, String> 
                     Backend::CudaWarp => 1,
                     _ => 2,
                 };
-                let g = cuda::Cuda::new(bags).ok_or("could not create CUDA buffers")?;
+                let g = cuda::Cuda::new(bags)?;
                 Ok(Box::new(move |i: Input, o: &mut [u8]| {
                     let (r, t) = g.run(variant, i.arrival, i.deadline, i.flags, o);
                     (r, GpuPhases { copy_in: t.upload, kernel: t.gpu, wall: t.wall, copy_out: t.download })
                 }))
             }
             #[cfg(not(has_cuda))]
-            Err("CUDA was not built".to_string())
+            Err(cuda_not_built())
         }
         _ => Err(format!("{} is not a GPU backend", backend.id())),
     }

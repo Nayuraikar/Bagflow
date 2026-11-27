@@ -3,6 +3,7 @@
 #import <Foundation/Foundation.h>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 static const char* kSrc = R"MSL(
@@ -72,19 +73,25 @@ static double now_s() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+// On failure the caller's name buffer carries the reason.
+static void* fail(char* out, size_t out_len, NSString* reason) {
+    if (out && out_len > 0) snprintf(out, out_len, "%s", [reason UTF8String]);
+    return nullptr;
+}
+
 extern "C" {
 
 void* bf_metal_create(size_t cap, char* name, size_t name_len) {
     @autoreleasepool {
         if (cap == 0) cap = 1;
         id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
-        if (!dev) return nullptr;
+        if (!dev) return fail(name, name_len, @"no Metal device found");
         NSError* err = nil;
         id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:kSrc] options:nil error:&err];
-        if (!lib) { NSLog(@"Metal shader compile failed: %@", err); return nullptr; }
+        if (!lib) return fail(name, name_len, [NSString stringWithFormat:@"Metal shader did not compile: %@", err.localizedDescription]);
         id<MTLFunction> fn = [lib newFunctionWithName:@"risk"];
         id<MTLComputePipelineState> pso = [dev newComputePipelineStateWithFunction:fn error:&err];
-        if (!pso) { NSLog(@"Metal pipeline failed: %@", err); return nullptr; }
+        if (!pso) return fail(name, name_len, [NSString stringWithFormat:@"this GPU cannot run the Metal kernel: %@", err.localizedDescription]);
 
         Ctx* c = new Ctx();
         c->dev = dev;
@@ -103,7 +110,10 @@ void* bf_metal_create(size_t cap, char* name, size_t name_len) {
         c->fl   = [dev newBufferWithLength:cap options:o];
         c->out  = [dev newBufferWithLength:cap options:o];
         c->part = [dev newBufferWithLength:groups * 12 options:o];
-        if (!c->arr || !c->dl || !c->fl || !c->out || !c->part || !c->q) { delete c; return nullptr; }
+        if (!c->arr || !c->dl || !c->fl || !c->out || !c->part || !c->q) {
+            delete c;
+            return fail(name, name_len, @"could not create Metal buffers");
+        }
         if (name && name_len > 0) {
             strncpy(name, [[dev name] UTF8String], name_len - 1);
             name[name_len - 1] = 0;

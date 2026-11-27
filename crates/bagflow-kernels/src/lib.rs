@@ -103,6 +103,11 @@ extern "C" {
     fn bf_omp_threads() -> i32;
 }
 
+/// Why the OpenMP kernel runs on one thread only. `None` when it was built with OpenMP.
+pub fn omp_missing_reason() -> Option<&'static str> {
+    option_env!("BAGFLOW_OPENMP_REASON")
+}
+
 pub fn omp_threads() -> usize {
     unsafe { bf_omp_threads() as usize }
 }
@@ -321,14 +326,17 @@ pub mod metal {
     }
 
     impl Metal {
-        pub fn new(cap: usize) -> Option<Metal> {
-            let mut buf = [0u8; 128];
+        /// Device buffers for up to `cap` bags, or why this machine cannot run the kernel.
+        pub fn new(cap: usize) -> Result<Metal, String> {
+            // the device name on success, the reason on failure
+            let mut buf = [0u8; 256];
             let p = unsafe { bf_metal_create(cap, buf.as_mut_ptr(), buf.len()) };
-            if p.is_null() {
-                return None;
-            }
             let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
-            Some(Metal { p, cap, name: String::from_utf8_lossy(&buf[..end]).into_owned() })
+            let text = String::from_utf8_lossy(&buf[..end]).into_owned();
+            if p.is_null() {
+                return Err(text);
+            }
+            Ok(Metal { p, cap, name: text })
         }
 
         pub fn run(&self, arr: &[u32], dl: &[u32], fl: &[u8], out: &mut [u8]) -> (Out, Timing) {
@@ -362,9 +370,9 @@ mod metal_tests {
     fn metal_matches_scalar_on_awkward_lengths() {
         let (_, b) = generate(&GenConfig { seed: 3, target_bags: 50_001 });
         let m = match metal::Metal::new(b.len()) {
-            Some(m) => m,
-            None => {
-                eprintln!("no Metal device, skipping");
+            Ok(m) => m,
+            Err(reason) => {
+                eprintln!("skipping Metal: {reason}");
                 return;
             }
         };
@@ -411,14 +419,17 @@ pub mod cuda {
     }
 
     impl Cuda {
-        pub fn new(cap: usize) -> Option<Cuda> {
-            let mut buf = [0u8; 128];
+        /// Device buffers for up to `cap` bags, or why this machine cannot run the kernel.
+        pub fn new(cap: usize) -> Result<Cuda, String> {
+            // the device name on success, the reason on failure
+            let mut buf = [0u8; 256];
             let p = unsafe { bf_cuda_create(cap, buf.as_mut_ptr(), buf.len()) };
-            if p.is_null() {
-                return None;
-            }
             let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
-            Some(Cuda { p, cap, name: String::from_utf8_lossy(&buf[..end]).into_owned() })
+            let text = String::from_utf8_lossy(&buf[..end]).into_owned();
+            if p.is_null() {
+                return Err(text);
+            }
+            Ok(Cuda { p, cap, name: text })
         }
 
         pub fn run(&self, variant: i32, arr: &[u32], dl: &[u32], fl: &[u8], out: &mut [u8]) -> (Out, Timing) {
@@ -452,9 +463,9 @@ mod cuda_tests {
     fn cuda_variants_match_scalar_on_awkward_lengths() {
         let (_, b) = generate(&GenConfig { seed: 3, target_bags: 50_001 });
         let g = match cuda::Cuda::new(b.len()) {
-            Some(g) => g,
-            None => {
-                eprintln!("no CUDA device, skipping");
+            Ok(g) => g,
+            Err(reason) => {
+                eprintln!("skipping CUDA: {reason}");
                 return;
             }
         };

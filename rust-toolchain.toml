@@ -1,0 +1,4 @@
+# The version the engine checks and the measurements in README.md were run with.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"

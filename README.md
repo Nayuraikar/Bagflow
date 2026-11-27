@@ -6,6 +6,73 @@ The discrete-event simulation is **sequential**, because events must be processe
 
 All data is synthetic. This is a simulation study, not an airport control system, and nothing is calibrated against a real airport.
 
+## Quickstart
+
+### Prerequisites
+
+| | macOS (Apple Silicon) | Linux x86_64 (Debian or Ubuntu commands) |
+|---|---|---|
+| C++ compiler | `xcode-select --install` | `sudo apt install build-essential curl` |
+| Rust | [rustup](https://rustup.rs). It installs the version in `rust-toolchain.toml` by itself | same |
+| Node | 24 (`web/.nvmrc`); 22.22 or later also meets the packages' requirements | same. The `nodejs` package of your distribution may be too old; use nvm or nodejs.org |
+| OpenMP (optional) | `brew install libomp` | included with g++. With clang, install `libomp-dev` |
+| GPU (optional) | Metal, no install | NVIDIA GPU of compute capability 7.5 or later, its driver, and the CUDA toolkit (`nvcc`) to build |
+| MPI (optional, command line only) | `brew install open-mpi` | `sudo apt install openmpi-bin libopenmpi-dev` |
+
+No GPU, libomp or MPI is needed. A backend that cannot be built or cannot run is listed as Unavailable with the reason, and the rest works.
+
+### Run everything
+
+```bash
+git clone <repository-url> bagflow
+cd bagflow
+scripts/setup.sh    # checks prerequisites, installs the web packages, builds the API (release)
+scripts/start.sh    # starts the API and the web app; Ctrl+C stops both
+```
+
+The first setup downloads packages and compiles, so it needs a network connection and takes longer than later ones.
+
+### What to expect
+
+1. `start.sh` ends with `BagFlow is running: http://localhost:5173`. Open that address.
+2. The **Main Dashboard** shows **Engine status**: your machine, and which kernel backends are available. Each unavailable one has its reason. On Apple Silicon, AVX2, CUDA and live MPI are expected there.
+3. Press **Run baseline** (Normal, dijkstra, fcfs, 100% capacity, 250,000 bags requested). It runs for a few seconds.
+4. The **Delayed bags** card then shows **9,245**, **3.697% of bags** (250,086 simulated). This result is deterministic. The pipeline timings below it are measured on your machine and will differ from run to run.
+
+### Addresses
+
+| Variable | Default | Used by |
+|---|---|---|
+| `BAGFLOW_API_ADDR` | `127.0.0.1:3001` | The API (where it listens) and `start.sh` |
+| `BAGFLOW_API_URL` | `http://127.0.0.1:3001` | `npm run dev` and `npm run preview`: where they forward `/api`. It can also go in `web/.env.local`. `start.sh` sets it from `BAGFLOW_API_ADDR` |
+| `BAGFLOW_WEB_PORT` | `5173` | `start.sh` |
+
+To run the two parts by hand:
+
+```bash
+# terminal 1: the API
+cargo run --release -p bagflow-api
+
+# terminal 2: the web app on http://localhost:5173
+cd web && npm ci && npm run dev
+# or the built version, on http://localhost:4173
+cd web && npm ci && npm run build && npm run preview
+```
+
+The API creates `data/` and saves one record per job in `data/runs/` (gitignored). `BAGFLOW_DATA_DIR` and `BAGFLOW_RESULTS_DIR` change the two folders. Full bag histories stay in memory for the 3 newest simulations only. The API allows any origin (CORS is fully open), so while it runs, any web page open in your browser can call it and start jobs.
+
+### Troubleshooting
+
+- **libomp missing.** The build warns `OpenMP backend not built: ...` and succeeds; the app lists `openmp` as not available. To add it: `brew install libomp` (with clang on Linux: `libomp-dev`), then run `scripts/setup.sh` again. A plain `cargo build` may not notice a newly installed library; `touch crates/bagflow-kernels/build.rs` first. For a libomp in another place, set `LIBOMP_PREFIX`.
+- **The API fails to start after removing libomp** with `Library not loaded: ... libomp.dylib`. That binary was built with it. Run `scripts/setup.sh` again.
+- **Port 3001 busy.** `start.sh` stops with `something already answers on 127.0.0.1:3001`, or the API prints `could not listen on ...`. See what holds the port with `lsof -nP -iTCP:3001 -sTCP:LISTEN`, or use another one: `BAGFLOW_API_ADDR=127.0.0.1:3101 scripts/start.sh`. By hand, set `BAGFLOW_API_ADDR` for the API and `BAGFLOW_API_URL=http://127.0.0.1:3101` for the web app.
+- **Port 5173 busy.** `BAGFLOW_WEB_PORT=5273 scripts/start.sh`.
+- **`Found another Vite dev process for this project`.** Vite runs one dev server per project folder. If `start.sh` is running, use its address, or stop it before `npm run dev`. `npm run preview` can run next to it.
+- **Debug build warning.** The dashboard says `Debug build: timings are not representative` when the API was built without `--release`. Results are the same but timings are not usable. Use `scripts/start.sh` or `cargo run --release -p bagflow-api`.
+- **CUDA not available.** The reason is shown in Engine status. `CUDA driver version is insufficient for CUDA runtime version` is also what CUDA reports when no NVIDIA driver is installed at all. If the toolkit is in another place than `/usr/local/cuda` and `nvcc` is not on `PATH`, set `CUDA_HOME` and run `scripts/setup.sh` again.
+- **A GPU or OpenMP backend breaks the build or misbehaves.** Leave it out with `BAGFLOW_NO_CUDA=1`, `BAGFLOW_NO_METAL=1` or `BAGFLOW_NO_OPENMP=1`, set while building.
+- **"API unreachable" in the app.** The API is not running, or the web app points at another address (`BAGFLOW_API_URL`). The page reconnects by itself.
+
 ## What is in here
 
 | Part | Where | What it does |
@@ -20,26 +87,10 @@ All data is synthetic. This is a simulation study, not an airport control system
 
 There are two engines. `engine2` is the one behind the API and the routing and scenario results. The older `engine.rs` (a 6-node chain with a 12-state bag machine) is still used by `slice`, `scale` and `validate`.
 
-## Run it
-
-Needs Rust, Node, and on macOS `brew install libomp` for the OpenMP kernel.
+## More commands
 
 ```bash
-# terminal 1: the API on 127.0.0.1:3001
-cargo run --release -p bagflow-api
-
-# terminal 2: the web app on http://localhost:5173
-cd web && npm install && npm run dev
-# or the built version, on http://localhost:4173
-cd web && npm run build && npm run preview
-```
-
-Use a release build: debug timings are not representative, and the app says so when it sees one.
-
-The API saves one record per job in `data/runs/` (gitignored). `BAGFLOW_DATA_DIR` and `BAGFLOW_RESULTS_DIR` change the two folders. Full bag histories stay in memory for the 3 newest simulations only. The API allows any origin (CORS is fully open), so while it runs, any web page open in your browser can call it and start jobs.
-
-```bash
-# checks
+# checks (CI runs these on Ubuntu and macOS: .github/workflows/ci.yml)
 cargo test --release
 cd web && npm run build && npm run lint
 
@@ -55,7 +106,9 @@ cargo run --release -p bagflow-sim -- gen --bags 50000000
 scripts/run_mpi.sh results/bags_seed42.bin 8
 ```
 
-CUDA and AVX2 need a Linux x86_64 machine, CUDA also an NVIDIA GPU (Kaggle was used). The build skips them elsewhere. Metal needs macOS.
+AVX2 needs an x86_64 CPU that has it. CUDA is built on Linux with `nvcc` and needs an NVIDIA GPU to run (Kaggle was used for the saved results). Metal needs macOS.
+
+The measurements below were taken before the API's default `generate` chunk changed from about 1,042 flights to 16 (17 at 10M bags, because of the task limit). The "Known issue" bullet and the "default chunk" row describe the old default; the new one has not been re-measured.
 
 ## The app
 

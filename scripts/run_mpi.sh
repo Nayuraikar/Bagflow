@@ -5,6 +5,10 @@ set -e
 cd "$(dirname "$0")/.."
 FILE=${1:-results/bags_seed42.bin}
 MAXP=${2:-8}
+for tool in mpicxx mpirun; do
+  command -v $tool >/dev/null 2>&1 || { echo "MPI is not available: $tool not found (macOS: brew install open-mpi; Ubuntu: apt install openmpi-bin libopenmpi-dev)" >&2; exit 1; }
+done
+[ -f "$FILE" ] || { echo "no bag file at $FILE; create it with: cargo run --release -p bagflow-sim -- gen --bags 50000000" >&2; exit 1; }
 mkdir -p bin
 mpicxx -O3 -std=c++17 kernels/mpi/risk_mpi.cpp -o bin/risk_mpi
 {

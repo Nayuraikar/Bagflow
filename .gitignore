@@ -8,10 +8,13 @@ __pycache__/
 .venv/
 results/*.parquet
 results/*.bin
+results/bags_*.bin
 *.o
 *.metallib
 .ipynb_checkpoints/
 results/*.csv
 target-*/
+# outputs of scripts/run_mpi.sh (only at the root: crates/*/src/bin is source)
 /bin/
-/data/
+# the API's job records
+data/

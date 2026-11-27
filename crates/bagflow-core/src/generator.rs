@@ -220,7 +220,7 @@ const FLIGHT_BATCH: usize = 2048;
 /// Starting guess for bags per flight, used only to size the first batch.
 const BAGS_PER_FLIGHT_GUESS: usize = 150;
 /// Flights per Rayon task in `generate_par`.
-const CHUNK_FLIGHTS: usize = 16;
+pub const CHUNK_FLIGHTS: usize = 16;
 
 pub fn generate_par(cfg: &GenConfig, threads: usize) -> (Vec<Flight>, BagSoA) {
     let pool = rayon::ThreadPoolBuilder::new()

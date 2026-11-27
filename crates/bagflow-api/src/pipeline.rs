@@ -7,7 +7,7 @@ use crate::sim::SEED;
 use bagflow_core::aggregate::{self, Aggregate};
 use bagflow_core::collect::Collected;
 use bagflow_core::engine2::RunStats;
-use bagflow_core::generator::{generate, generate_on, GenConfig};
+use bagflow_core::generator::{generate, generate_on, GenConfig, CHUNK_FLIGHTS};
 use bagflow_core::soa::BagSoA;
 use bagflow_core::types::Flight;
 use bagflow_kernels::runner::{measure_alternating, Backend, Input, Measurement};
@@ -19,7 +19,6 @@ use std::time::Instant;
 const GENERATE_REPS: usize = 3;
 const CLASSIFY_REPS: usize = 9;
 const AGGREGATE_REPS: usize = 5;
-const GENERATE_CHUNK_FLIGHTS: usize = 16;
 
 /// The fastest CPU kernel family this machine has, spread over Rayon.
 pub fn default_classify_backend() -> String {
@@ -86,7 +85,7 @@ pub fn generate_phase(bags: usize, threads: usize) -> Result<(Vec<Flight>, BagSo
         times.identical &= base.checksum() == expected;
         drop(base);
         let t = Instant::now();
-        let (flights, par, _) = generate_on(&pool, &cfg, GENERATE_CHUNK_FLIGHTS, Instant::now());
+        let (flights, par, _) = generate_on(&pool, &cfg, CHUNK_FLIGHTS, Instant::now());
         let par_ms = ms(t);
         times.identical &= par.checksum() == expected;
         if rep > 0 {

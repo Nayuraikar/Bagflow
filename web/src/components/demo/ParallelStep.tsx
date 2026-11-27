@@ -98,7 +98,7 @@ export function ParallelStep({ step, runs }: { step: 'workload' | 'kernel'; runs
           <>
             <span className="font-mono text-xs break-words">POST /api/parallel-runs</span>
             {request
-              ? `: ${request.workload}, ${request.backend}${takesThreads(request.backend) ? `, ${request.threads} threads` : ''}, ${int(request.bagCount)} bags requested, ${request.repetitions} repetitions per side${request.chunkSize === undefined ? '' : `, ${int(request.chunkSize)} flights per chunk (the API’s default chunk is much larger and keeps most threads idle here)`}.`
+              ? `: ${request.workload}, ${request.backend}${takesThreads(request.backend) ? `, ${request.threads} threads` : ''}, ${int(request.bagCount)} bags requested, ${request.repetitions} repetitions per side${request.chunkSize === undefined ? '' : `, ${int(request.chunkSize)} flights per chunk`}.`
               : ': the settings come from the API’s health report.'}
           </>
         }

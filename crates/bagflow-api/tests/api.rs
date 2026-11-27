@@ -98,6 +98,24 @@ async fn health_lists_options_and_backends() {
 }
 
 #[tokio::test]
+async fn unavailable_backends_give_a_reason_and_are_refused() {
+    let dir = TempDir::new("unavailable");
+    let app = server(&dir, 1);
+    let h = get(&app, "/api/health").await;
+    for b in h["backends"].as_array().unwrap().iter().filter(|b| b["available"] == false) {
+        let (id, reason) = (b["id"].as_str().unwrap(), b["reason"].as_str().unwrap_or(""));
+        assert!(!reason.is_empty(), "{id} has no reason");
+        println!("{id}: {reason}");
+        let bench = json!({ "backends": [id] }).to_string();
+        expect_error(&app, "POST", "/api/benchmarks", Some(&bench), StatusCode::BAD_REQUEST, "backend_unavailable").await;
+        let parallel = json!({ "backend": id }).to_string();
+        expect_error(&app, "POST", "/api/parallel-runs", Some(&parallel), StatusCode::BAD_REQUEST, "backend_unavailable").await;
+        let run = json!({ "classify_backend": id }).to_string();
+        expect_error(&app, "POST", "/api/simulations", Some(&run), StatusCode::BAD_REQUEST, "backend_unavailable").await;
+    }
+}
+
+#[tokio::test]
 async fn legacy_endpoints_are_gone() {
     let dir = TempDir::new("legacy");
     let app = server(&dir, 1);
@@ -115,7 +133,11 @@ async fn every_run_reports_a_measured_pipeline() {
     let dir = TempDir::new("pipeline");
     let app = server(&dir, 4);
     let mut checksums = Vec::new();
-    for (threads, backend) in [(1, "scalar"), (3, "openmp"), (2, "rayon-ilp")] {
+    // OpenMP is optional; ILP stands in where it was not built
+    let health = get(&app, "/api/health").await;
+    let openmp = health["backends"].as_array().unwrap().iter().any(|b| b["id"] == "openmp" && b["available"] == true);
+    let middle = if openmp { "openmp" } else { "ilp" };
+    for (threads, backend) in [(1, "scalar"), (3, middle), (2, "rayon-ilp")] {
         let id = submit(&app, "/api/simulations", json!({ "bag_count": 20000, "scenario": "PeakSurge", "threads": threads, "classify_backend": backend })).await;
         let r = wait_done(&app, &format!("/api/simulations/{id}")).await;
         checksums.push(r["engine_checksum"].clone());

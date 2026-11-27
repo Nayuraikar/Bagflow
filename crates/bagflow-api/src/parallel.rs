@@ -8,7 +8,7 @@ use crate::sim::{check_range, SimData, SEED};
 use bagflow_core::aggregate;
 use bagflow_core::collect::CollectOptions;
 use bagflow_core::engine2::{run_collected, Policy, Strategy};
-use bagflow_core::generator::{generate_on, generate_par, generate_traced, GenConfig};
+use bagflow_core::generator::{generate_on, generate_par, generate_traced, GenConfig, CHUNK_FLIGHTS};
 use bagflow_core::network::airport_network;
 use bagflow_core::soa::BagSoA;
 use bagflow_core::trace::{self, Stage, Task};
@@ -25,7 +25,7 @@ pub const BAG_COUNT_RANGE: (u64, u64) = (1_000, 10_000_000);
 pub const AGGREGATE_BAG_COUNT_RANGE: (u64, u64) = (1_000, 1_000_000);
 pub const REPETITIONS_RANGE: (u32, u32) = (1, 10);
 pub const MAX_TASKS: u64 = 4_096;
-/// Default chunk sizes aim for about this many tasks.
+/// Default `classify` and `aggregate` chunk sizes aim for about this many tasks.
 const DEFAULT_TASKS: u64 = 64;
 const MIN_BAG_CHUNK: u64 = 1_024;
 /// Only used to estimate a task count before the flights exist.
@@ -40,7 +40,8 @@ pub struct ParallelConfig {
     /// `None` means all logical cores. Single-threaded backends always report 1.
     pub threads: Option<usize>,
     pub bag_count: u64,
-    /// Flights per task for `generate`, bags per task otherwise.
+    /// Flights per task for `generate`, bags per task otherwise. `None` picks the default:
+    /// the pipeline's flight chunk for `generate`, about 64 tasks otherwise.
     pub chunk_size: Option<u64>,
     pub repetitions: u32,
     /// `aggregate` only: reuse a retained simulation run instead of preparing one.
@@ -120,8 +121,14 @@ impl ParallelConfig {
             None => check_range("bag_count", self.bag_count, if aggregate { AGGREGATE_BAG_COUNT_RANGE } else { BAG_COUNT_RANGE })?,
         }
         let units = if self.workload == "generate" { self.bag_count.div_ceil(BAGS_PER_FLIGHT_ESTIMATE) } else { self.bag_count };
-        let floor = if self.workload == "generate" { 1 } else { MIN_BAG_CHUNK };
-        let chunk = self.chunk_size.unwrap_or_else(|| units.div_ceil(DEFAULT_TASKS).max(floor));
+        let default_chunk = if self.workload == "generate" {
+            // The generator works in batches of flights, so its chunk must stay small or
+            // most threads sit idle. It grows only if the task limit requires it.
+            (CHUNK_FLIGHTS as u64).max(units.div_ceil(MAX_TASKS))
+        } else {
+            units.div_ceil(DEFAULT_TASKS).max(MIN_BAG_CHUNK)
+        };
+        let chunk = self.chunk_size.unwrap_or(default_chunk);
         if chunk == 0 || units.div_ceil(chunk) > MAX_TASKS {
             return Err(ApiError::invalid(format!(
                 "chunk_size must be at least {} for this workload (at most {MAX_TASKS} tasks)",
@@ -513,4 +520,46 @@ pub fn execute(cfg: &ParallelConfig, retained: Option<&SimData>, progress: &mut 
             "merge_ms": "combining per-chunk results: the merge stage, or appending per-chunk bags for generate",
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generate_config(bag_count: u64) -> ParallelConfig {
+        let cfg = ParallelConfig { workload: "generate".into(), threads: Some(4), bag_count, repetitions: 1, ..Default::default() };
+        cfg.validate(None).expect("the default request is valid")
+    }
+
+    #[test]
+    fn default_generate_chunk_is_the_pipeline_chunk_at_every_size() {
+        for bags in [BAG_COUNT_RANGE.0, 250_000, 1_000_000, 9_000_000] {
+            assert_eq!(generate_config(bags).chunk_size, Some(CHUNK_FLIGHTS as u64), "{bags} bags");
+        }
+        // at the largest size 16 would pass the task limit, so the chunk grows just enough
+        let largest = generate_config(BAG_COUNT_RANGE.1);
+        assert_eq!(largest.chunk_size, Some(17));
+    }
+
+    #[test]
+    fn default_generate_chunk_gives_more_than_two_tasks_per_batch() {
+        let result = execute(&generate_config(1_000_000), None, &mut |_, _, _| {}).unwrap();
+        let run = &result["selected"];
+        let number = |v: &Value| v.as_f64().unwrap();
+        let tasks = run["tasks"].as_array().unwrap();
+        let per_batch: Vec<usize> = run["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["name"] == "generate_bags")
+            .map(|s| {
+                let (from, to) = (number(&s["start_ms"]), number(&s["end_ms"]));
+                tasks.iter().filter(|t| number(&t["start_ms"]) >= from && number(&t["end_ms"]) <= to).count()
+            })
+            .collect();
+        assert_eq!(per_batch.iter().sum::<usize>(), tasks.len(), "every task lies in one batch");
+        // the last batches only top up to the target and can be tiny; the full ones must not be
+        assert!(per_batch[0] > 2, "tasks per batch: {per_batch:?}");
+        assert!(tasks.len() > 2 * per_batch.len(), "tasks per batch: {per_batch:?}");
+    }
 }

@@ -43,11 +43,14 @@ fn main() {
     if let Some((name, k)) = simd {
         bench(name, reps, &mut base, &ref_res, &ref_out, &mut out, |o| k(arr, dl, fl, o));
     }
-    bench(&format!("openmp-{}", omp_threads()), reps, &mut base, &ref_res, &ref_out, &mut out, |o| openmp(arr, dl, fl, o));
+    match omp_missing_reason() {
+        None => bench(&format!("openmp-{}", omp_threads()), reps, &mut base, &ref_res, &ref_out, &mut out, |o| openmp(arr, dl, fl, o)),
+        Some(reason) => println!("openmp: unavailable ({reason})"),
+    }
 
     #[cfg(has_metal)]
     {
-        if let Some(m) = bagflow_kernels::metal::Metal::new(n) {
+        match bagflow_kernels::metal::Metal::new(n) { Ok(m) => {
             println!("\nMetal GPU: {}  (shared buffers: copy in/out is a memcpy, as in a straight port)", m.name);
             let (mut up, mut gp, mut wl, mut dn, mut tot) = (f64::MAX, f64::MAX, f64::MAX, f64::MAX, f64::MAX);
             let mut ok = true;
@@ -74,14 +77,14 @@ fn main() {
             line("metal kernel (wall)", wl);
             line("metal + copy in/out", tot);
             println!("copy in {:.2} ms, copy out + reduce {:.2} ms, output {}\n", up * 1e3, dn * 1e3, if ok { "identical" } else { "MISMATCH" });
-        } else {
-            println!("\nno Metal device found");
+        }
+        Err(reason) => println!("\nMetal: unavailable ({reason})"),
         }
     }
 
     #[cfg(has_cuda)]
     {
-        if let Some(g) = bagflow_kernels::cuda::Cuda::new(n) {
+        match bagflow_kernels::cuda::Cuda::new(n) { Ok(g) => {
             println!("\nCUDA GPU: {}  (pageable host memory: copy in/out crosses PCIe)", g.name);
             let nf = n as f64;
             let line = |name: &str, s: f64| {
@@ -109,8 +112,8 @@ fn main() {
                 println!("  copy in {:.2} ms, copy out {:.2} ms, output {}", up * 1e3, dn * 1e3, if ok { "identical" } else { "MISMATCH" });
             }
             println!();
-        } else {
-            println!("\nno CUDA device found");
+        }
+        Err(reason) => println!("\nCUDA: unavailable ({reason})"),
         }
     }
 

@@ -28,8 +28,8 @@ export const BASELINE_CONFIG = simulation('dijkstra', 100)
 
 const BATCH_BAGS = 10_000_000
 /**
- * Flights per generation task. The generator works in batches of 2,048 flights, and the API's default
- * chunk for this size is so large that a batch holds two tasks, which leaves most threads idle.
+ * Flights per generation task. The generator works in batches of 2,048 flights, so this gives 32 tasks
+ * per full batch. The demo names it so that its saved runs stay comparable; the API's default is 16.
  */
 const GENERATE_CHUNK_FLIGHTS = 64
 /** In order of preference; the first one this machine has is used. */
