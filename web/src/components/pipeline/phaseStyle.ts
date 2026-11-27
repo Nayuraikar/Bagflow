@@ -4,6 +4,7 @@ import type { PhaseId, PipelinePhase } from '../../types/models'
 export const PHASE_COLOR: Record<PhaseId | 'other', string> = {
   generate: '#3975ce',
   classify: '#b8641f',
+  precompute: '#c2417a',
   simulate: '#7c5cbf',
   aggregate: '#0a927f',
   other: '#9aa5b5',
@@ -15,6 +16,8 @@ export function phaseMethod(p: PipelinePhase) {
       return 'Parallel: Rayon'
     case 'classify':
       return `Selected kernel: ${p.backend}`
+    case 'precompute':
+      return `Parallel per-bag precompute: ${p.backend}`
     case 'simulate':
       return 'Sequential'
     case 'aggregate':

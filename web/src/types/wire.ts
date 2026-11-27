@@ -77,6 +77,8 @@ export interface WireSimConfig {
   /** Absent on records saved before these fields existed. */
   threads?: number
   classify_backend?: string
+  operational_parallel?: boolean
+  workers?: number
 }
 
 export interface WireSimSummary {
@@ -136,7 +138,7 @@ export type WireHistoryItem = WireRecordBase &
   )
 
 export interface WirePhase {
-  id: 'generate' | 'classify' | 'simulate' | 'aggregate'
+  id: 'generate' | 'classify' | 'precompute' | 'simulate' | 'aggregate'
   name: string
   has_parallel_implementation: boolean
   backend: string
@@ -177,4 +179,19 @@ export interface WireSimulation extends WireRecordBase {
   engine_checksum: string | null
   summary: WireSimSummary | null
   pipeline: WirePipeline | null
+  /** Absent on runs saved before operational parallel mode existed. */
+  operational?: WireOperational | null
+}
+
+export interface WireOperational {
+  enabled: boolean
+  des_ms: number
+  total_ms: number
+  routes_precomputable: boolean
+  routes_note: string | null
+  workers?: number
+  routes_precomputed?: boolean
+  parallel_parts?: string[]
+  precompute?: { sequential_ms: number; parallel_ms: number; speedup: number; efficiency: number; identical_to_sequential: boolean }
+  tasks?: { id: number; kind: string; worker: number; start_ms: number; end_ms: number; size: number }[]
 }

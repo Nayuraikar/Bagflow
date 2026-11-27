@@ -6,7 +6,8 @@ use crate::error::{ApiError, ApiResult};
 use crate::pipeline;
 use bagflow_core::aggregate::{self, Aggregate};
 use bagflow_core::collect::{CollectOptions, Collected, Hop, WAIT_BOUNDS_MS};
-use bagflow_core::engine2::{inspection_ms, run_collected, Outage, Policy, RunStats, Strategy, Target};
+use bagflow_core::engine2::{inspection_ms, run_collected_pre, Outage, Policy, RunStats, Strategy, Target};
+use bagflow_core::operational::{route_precompute, Precomputed, TaskKind, TASKS_PER_WORKER};
 use bagflow_core::network::airport_network;
 use bagflow_core::scenarios::{build, ALL};
 use bagflow_core::soa::BagSoA;
@@ -46,6 +47,11 @@ pub struct SimConfig {
     pub threads: usize,
     /// Backend for the batch deadline-risk phase.
     pub classify_backend: String,
+    /// Operational parallel mode: precompute the independent per-bag work on `workers`
+    /// Rayon threads before the (still sequential) event loop. Never changes the result.
+    pub operational_parallel: bool,
+    /// Workers for the operational precompute.
+    pub workers: usize,
 }
 
 impl Default for SimConfig {
@@ -59,6 +65,8 @@ impl Default for SimConfig {
             bag_count: 250_000,
             threads: logical_cores(),
             classify_backend: pipeline::default_classify_backend(),
+            operational_parallel: false,
+            workers: logical_cores(),
         }
     }
 }
@@ -96,6 +104,7 @@ impl SimConfig {
         check_range("capacity_pct", self.capacity_pct, CAPACITY_PCT_RANGE)?;
         check_range("server_multiplier", self.server_multiplier, MULTIPLIER_RANGE)?;
         check_range("threads", self.threads, bench::THREADS_RANGE)?;
+        check_range("workers", self.workers, bench::THREADS_RANGE)?;
         self.backend().map(|_| ())
     }
 
@@ -185,10 +194,18 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
     progress("classifying", 0, total);
     let classify = pipeline::classify_phase(&setup.bags, backend, cfg.threads)?;
 
+    let pre = if cfg.operational_parallel {
+        progress("precomputing", 0, total);
+        let (p, c) = pipeline::precompute_phase(&setup.bags, &setup.nodes, &setup.edges, st, &setup.outages, cfg.workers)?;
+        Some((p, c))
+    } else {
+        None
+    };
+
     progress("simulating", 0, total);
     let started = Instant::now();
     let mut on_progress = |done: u64, total: u64| progress("simulating", done, total);
-    let (stats, collected) = run_collected(
+    let (stats, collected) = run_collected_pre(
         &setup.bags,
         &setup.nodes,
         &setup.edges,
@@ -198,6 +215,7 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
         &setup.outages,
         CollectOptions { history: true, sample_interval_ms: Some(SAMPLE_INTERVAL_MS) },
         Some(&mut on_progress),
+        pre.as_ref().map(|(p, _)| p),
     );
     let wall_s = started.elapsed().as_secs_f64();
 
@@ -233,6 +251,7 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
         "checksum": format!("{dataset_checksum:016x}"),
     });
     let mut result = data.result(dataset, wall_s, &aggregated);
+    result["operational"] = operational_json(cfg, st, &data.outages, pre.as_ref(), wall_s * 1e3);
     let report = pipeline::Report {
         threads: cfg.threads,
         bags_generated: generated,
@@ -240,6 +259,7 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
         generate,
         classify,
         simulate_ms: wall_s * 1e3,
+        precompute: pre.map(|(_, c)| (c, cfg.workers)),
         aggregate: aggregation,
         aggregate_matches_engine,
         scenario_setup_ms,
@@ -247,6 +267,52 @@ pub fn execute(cfg: &SimConfig, progress: &mut dyn FnMut(&'static str, u64, u64)
     };
     result["pipeline"] = report.json();
     Ok(Finished { data, result })
+}
+
+/// What ran where in this run, with the measured precompute tasks. Sequential runs report
+/// only the event-loop time, because their per-bag work happens inside the loop.
+fn operational_json(cfg: &SimConfig, st: Strategy, outages: &[Outage], pre: Option<&(Precomputed, pipeline::Compared)>, des_ms: f64) -> Value {
+    let routes = route_precompute(st, outages);
+    let mut v = json!({
+        "enabled": pre.is_some(),
+        "des_ms": des_ms,
+        "routes_precomputable": routes.is_ok(),
+        "routes_note": routes.err(),
+        "sequential_parts": ["event loop", "queues", "server allocation", "event ordering", "arrival event registration order"],
+        "definitions": {
+            "des_ms": "wall time of the sequential event loop, including recording bag histories and node samples",
+            "total_ms": "parallel precompute median + des_ms; for a run without the mode, des_ms alone",
+            "tasks": "measured during the last parallel precompute repetition, whose output the event loop used; times are ms from the start of that repetition",
+        },
+    });
+    match pre {
+        None => {
+            v["total_ms"] = json!(des_ms);
+        }
+        Some((p, c)) => {
+            let (base, par) = (pipeline::median(&c.baseline_ms), pipeline::median(&c.parallel_ms));
+            let mut parallel_parts = vec![TaskKind::Checkin, TaskKind::FlightGrouping];
+            if p.routes.is_some() {
+                parallel_parts.push(TaskKind::RouteService);
+            }
+            v["workers"] = json!(cfg.workers);
+            v["tasks_per_worker"] = json!(TASKS_PER_WORKER);
+            v["parallel_parts"] = json!(parallel_parts);
+            v["routes_precomputed"] = json!(p.routes.is_some());
+            v["precompute"] = json!({
+                "sequential_ms": base,
+                "parallel_ms": par,
+                "sequential_samples_ms": c.baseline_ms,
+                "parallel_samples_ms": c.parallel_ms,
+                "speedup": base / par,
+                "efficiency": base / par / cfg.workers as f64,
+                "identical_to_sequential": c.identical,
+            });
+            v["total_ms"] = json!(par + des_ms);
+            v["tasks"] = json!(p.tasks);
+        }
+    }
+    v
 }
 
 fn sample_statuses(c: &Collected, nn: usize) -> Vec<(NodeStatus, Option<f64>)> {

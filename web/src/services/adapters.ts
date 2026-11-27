@@ -1,9 +1,9 @@
 // Pure mapping from the Rust JSON to the UI models.
 
-import type { Health, JobProgress, Pipeline, PipelinePhase, Run, Simulation, SimulationConfig, SimulationSummary } from '../types/models'
+import type { Health, JobProgress, Operational, Pipeline, PipelinePhase, Run, Simulation, SimulationConfig, SimulationSummary } from '../types/models'
 import type { SweepRequest } from '../types/sweep'
 import type { WireSweepConfig } from '../types/wireSweep'
-import type { WireHealth, WireHistoryItem, WirePhase, WirePipeline, WireProgress, WireSimConfig, WireSimSummary, WireSimulation } from '../types/wire'
+import type { WireHealth, WireHistoryItem, WireOperational, WirePhase, WirePipeline, WireProgress, WireSimConfig, WireSimSummary, WireSimulation } from '../types/wire'
 
 export const toSweepRequest = (w: WireSweepConfig): SweepRequest => ({
   scenarios: w.scenarios, routings: w.routings, policies: w.policies, capacityPcts: w.capacity_pcts,
@@ -61,6 +61,7 @@ export const toProgress = (w: WireProgress): JobProgress => ({
 
 const toSimConfig = (w: WireSimConfig): SimulationConfig => ({
   threads: w.threads, classifyBackend: w.classify_backend,
+  operationalParallel: w.operational_parallel, workers: w.workers,
   scenario: w.scenario, routing: w.routing, policy: w.policy,
   capacityPct: w.capacity_pct, serverMultiplier: w.server_multiplier, bagCount: w.bag_count,
 })
@@ -70,6 +71,7 @@ export const fromSimConfig = (c: SimulationConfig): WireSimConfig => ({
   capacity_pct: c.capacityPct, server_multiplier: c.serverMultiplier, bag_count: c.bagCount,
   // JSON leaves out undefined values
   threads: c.threads, classify_backend: c.classifyBackend,
+  operational_parallel: c.operationalParallel, workers: c.workers,
 })
 
 export const toSummary = (w: WireSimSummary): SimulationSummary => ({
@@ -158,6 +160,22 @@ const toPipeline = (w: WirePipeline): Pipeline => ({
   },
 })
 
+const toOperational = (w: WireOperational): Operational => ({
+  enabled: w.enabled,
+  desMs: w.des_ms,
+  totalMs: w.total_ms,
+  routesPrecomputable: w.routes_precomputable,
+  routesNote: w.routes_note,
+  workers: w.workers ?? null,
+  routesPrecomputed: w.routes_precomputed ?? false,
+  parallelParts: w.parallel_parts ?? [],
+  precompute: w.precompute ? {
+    sequentialMs: w.precompute.sequential_ms, parallelMs: w.precompute.parallel_ms, speedup: w.precompute.speedup,
+    efficiency: w.precompute.efficiency, identical: w.precompute.identical_to_sequential,
+  } : null,
+  tasks: (w.tasks ?? []).map((t) => ({ id: t.id, kind: t.kind, worker: t.worker, startMs: t.start_ms, endMs: t.end_ms, size: t.size })),
+})
+
 export const toSimulation = (w: WireSimulation): Simulation => ({
   id: w.id,
   status: w.status,
@@ -167,6 +185,7 @@ export const toSimulation = (w: WireSimulation): Simulation => ({
   engineChecksum: w.engine_checksum,
   summary: w.summary && toSummary(w.summary),
   pipeline: w.pipeline && toPipeline(w.pipeline),
+  operational: w.operational ? toOperational(w.operational) : null,
   progress: w.progress && toProgress(w.progress),
   error: w.error,
 })

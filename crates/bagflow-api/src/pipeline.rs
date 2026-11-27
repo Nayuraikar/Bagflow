@@ -6,7 +6,9 @@ use crate::bench::{logical_cores, stats};
 use crate::sim::SEED;
 use bagflow_core::aggregate::{self, Aggregate};
 use bagflow_core::collect::Collected;
-use bagflow_core::engine2::RunStats;
+use bagflow_core::engine2::{Outage, RunStats, Strategy};
+use bagflow_core::operational::{precompute, Precomputed};
+use bagflow_core::types::{Edge, Node};
 use bagflow_core::generator::{generate, generate_on, GenConfig, CHUNK_FLIGHTS};
 use bagflow_core::soa::BagSoA;
 use bagflow_core::types::Flight;
@@ -19,6 +21,7 @@ use std::time::Instant;
 const GENERATE_REPS: usize = 3;
 const CLASSIFY_REPS: usize = 9;
 const AGGREGATE_REPS: usize = 5;
+const PRECOMPUTE_REPS: usize = 3;
 
 /// The fastest CPU kernel family this machine has, spread over Rayon.
 pub fn default_classify_backend() -> String {
@@ -99,6 +102,43 @@ pub fn generate_phase(bags: usize, threads: usize) -> Result<(Vec<Flight>, BagSo
     }
     let (flights, data) = last.expect("at least one repetition ran");
     Ok((flights, data, checksum.expect("set in the first repetition"), times))
+}
+
+/// Operational parallel mode: the per-bag precompute, sequential and on `workers` Rayon
+/// threads, alternating. Both use the same task plan; the outputs must be identical.
+/// Returns the last parallel output, whose task telemetry is the one reported.
+#[allow(clippy::too_many_arguments)]
+pub fn precompute_phase(
+    bags: &BagSoA,
+    nodes: &[Node],
+    edges: &[Edge],
+    strat: Strategy,
+    outages: &[Outage],
+    workers: usize,
+) -> Result<(Precomputed, Compared), String> {
+    let pool = build_pool(workers)?;
+    let mut times = Compared { baseline_ms: Vec::new(), parallel_ms: Vec::new(), identical: true };
+    let mut last: Option<Precomputed> = None;
+    for rep in 0..=PRECOMPUTE_REPS {
+        drop(last.take());
+        let t = Instant::now();
+        let base = precompute(bags, nodes, edges, strat, SEED, outages, workers, None);
+        let base_ms = ms(t);
+        let t = Instant::now();
+        let par = precompute(bags, nodes, edges, strat, SEED, outages, workers, Some(&pool));
+        let par_ms = ms(t);
+        times.identical &= par == base;
+        drop(base);
+        if rep > 0 {
+            times.baseline_ms.push(base_ms);
+            times.parallel_ms.push(par_ms);
+        }
+        last = Some(par);
+    }
+    if !times.identical {
+        return Err("the parallel precompute did not reproduce the sequential one".into());
+    }
+    Ok((last.expect("at least one repetition ran"), times))
 }
 
 pub struct Classified {
@@ -187,6 +227,8 @@ pub struct Report {
     pub generate: Compared,
     pub classify: Classified,
     pub simulate_ms: f64,
+    /// Operational parallel mode only: the precompute phase and its worker count.
+    pub precompute: Option<(Compared, usize)>,
     pub aggregate: Compared,
     pub aggregate_matches_engine: bool,
     pub scenario_setup_ms: f64,
@@ -212,7 +254,7 @@ impl Report {
             "id": "simulate",
             "name": "Discrete-event simulation",
             "has_parallel_implementation": false,
-            "backend": "engine2 (sequential)",
+            "backend": if self.precompute.is_some() { "engine2 (sequential, precomputed per-bag values)" } else { "engine2 (sequential)" },
             "threads": 1,
             "time_ms": self.simulate_ms,
             "samples_ms": [self.simulate_ms],
@@ -228,8 +270,17 @@ impl Report {
         aggregation["bags"] = json!(self.bags_simulated);
         aggregation["verified_against_engine"] = json!(self.aggregate_matches_engine);
 
+        let precompute = self.precompute.as_ref().map(|(c, w)| {
+            let mut v = c.json("precompute", "Operational precompute", "sequential", "rayon", Some(*w));
+            v["bags"] = json!(self.bags_simulated);
+            v
+        });
+
         let other = self.scenario_setup_ms + self.summarise_ms;
-        let eligible = [&self.generate, &self.classify.times, &self.aggregate];
+        let mut eligible = vec![&self.generate, &self.classify.times, &self.aggregate];
+        if let Some((c, _)) = &self.precompute {
+            eligible.push(c);
+        }
         let eligible_base: f64 = eligible.iter().map(|c| median(&c.baseline_ms)).sum();
         let eligible_par: f64 = eligible.iter().map(|c| median(&c.parallel_ms)).sum();
         let baseline_total = eligible_base + self.simulate_ms + other;
@@ -240,7 +291,10 @@ impl Report {
             "threads": self.threads,
             "machine": { "os": std::env::consts::OS, "arch": std::env::consts::ARCH, "logical_cores": logical_cores() },
             "debug_build": cfg!(debug_assertions),
-            "phases": [generate, classify, simulate, aggregation],
+            "phases": match precompute {
+                Some(p) => json!([generate, classify, p, simulate, aggregation]),
+                None => json!([generate, classify, simulate, aggregation]),
+            },
             "other_sequential": {
                 "time_ms": other,
                 "scenario_setup_ms": self.scenario_setup_ms,
@@ -259,7 +313,7 @@ impl Report {
             },
             "definitions": {
                 "time_ms": "wall time; median of the repetitions after one warm-up, alternating between baseline and parallel. The simulation, scenario setup and summarising run once",
-                "repetitions": { "generate": GENERATE_REPS, "classify": CLASSIFY_REPS, "aggregate": AGGREGATE_REPS, "simulate": 1 },
+                "repetitions": { "generate": GENERATE_REPS, "classify": CLASSIFY_REPS, "aggregate": AGGREGATE_REPS, "precompute": PRECOMPUTE_REPS, "simulate": 1 },
                 "speedup": "median baseline time / median parallel time on the same input in this run",
                 "full": "sum of the four phases and the other sequential work, once with every baseline and once with every parallel phase. It is a composed total, not one end-to-end timing, and leaves out repetitions, output checks and saving",
                 "simulate": "includes recording bag histories and node time-series",

@@ -7,6 +7,7 @@ const PHASES: Record<string, string> = {
   queued: 'Queued',
   generating: 'Generating the dataset (timed sequentially and in parallel)',
   classifying: 'Classifying deadline risk (timed scalar and selected kernel)',
+  precomputing: 'Operational precompute of per-bag work (timed sequentially and in parallel)',
   simulating: 'Simulating (sequential, events in time order)',
   aggregating: 'Aggregating results (timed sequentially and in parallel)',
   summarising: 'Summarising',

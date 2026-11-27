@@ -1,12 +1,13 @@
 //! Phase 4 engine: general layered graph, routing strategies, queue policies.
 use crate::collect::{CollectOptions, Collected, Collector};
 use crate::events::{EventKind, ScheduledEvent};
+use crate::operational::Precomputed;
 use crate::soa::BagSoA;
 use crate::types::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-const INF: u64 = u64::MAX / 4;
+pub(crate) const INF: u64 = u64::MAX / 4;
 const SIGMA: f64 = 0.4;
 const HOLD_PROB: f64 = 0.05;
 const HOLD_MEAN_MS: f64 = 20_000.0;
@@ -66,9 +67,9 @@ pub fn inspection_ms(seed: u64, bag: u32, kind: NodeKind) -> Option<f64> {
         .then(|| lognormal(seed, bag, st, 3, HOLD_MEAN_MS))
 }
 
-type Adj = Vec<Vec<(u16, u32)>>;
+pub(crate) type Adj = Vec<Vec<(u16, u32)>>;
 
-fn adjacency(nn: usize, edges: &[Edge]) -> (Adj, Adj) {
+pub(crate) fn adjacency(nn: usize, edges: &[Edge]) -> (Adj, Adj) {
     let mut out: Adj = vec![Vec::new(); nn];
     let mut inc: Adj = vec![Vec::new(); nn];
     for e in edges.iter().filter(|e| e.online) {
@@ -106,6 +107,43 @@ pub fn dijkstra_table(nodes: &[Node], edges: &[Edge]) -> (Vec<u16>, Vec<Vec<u64>
     let loaders: Vec<u16> = nodes.iter().filter(|n| n.kind == NodeKind::Loading).map(|n| n.id).collect();
     let dist = loaders.iter().map(|l| dijkstra_to(*l as usize, nodes, &inc)).collect();
     (loaders, dist)
+}
+
+/// Service time (ms) of `bag` at node `nd`: a pure function of (seed, bag, node).
+/// Shared by the event loop and the operational precompute so both draw the same value.
+pub(crate) fn service_ms(seed: u64, bag: u32, nd: &Node) -> u32 {
+    let st = stage(nd.kind);
+    let mut d = lognormal(seed, bag, st, 0, nd.mean_service_ms as f64);
+    if let Some(hold) = inspection_ms(seed, bag, nd.kind) {
+        d += hold;
+    }
+    (d as u64).max(1).min(u32::MAX as u64) as u32
+}
+
+/// Outgoing candidates (to, travel, travel + remaining distance) from a node towards the
+/// loader whose distance row is `row`, preferring edges that are up.
+pub(crate) fn candidates(out_u: &[(u16, u32)], eidx_u: &[usize], edge_up: &[bool], row: &[u64]) -> Vec<(u16, u32, u64)> {
+    let all: Vec<(u16, u32, u64, bool)> = out_u
+        .iter()
+        .enumerate()
+        .filter(|(_, (v, _))| row[*v as usize] < INF)
+        .map(|(i, (v, tr))| (*v, *tr, *tr as u64 + row[*v as usize], edge_up[eidx_u[i]]))
+        .collect();
+    let mut c: Vec<(u16, u32, u64)> = all.iter().filter(|x| x.3).map(|x| (x.0, x.1, x.2)).collect();
+    if c.is_empty() {
+        c = all.iter().map(|x| (x.0, x.1, x.2)).collect(); // no live alternative: use the edge anyway
+    }
+    debug_assert!(!c.is_empty());
+    c
+}
+
+/// The hop chosen by a static strategy (dijkstra or ecmp); `None` for the dynamic ones.
+pub(crate) fn static_pick(strat: Strategy, c: &[(u16, u32, u64)], bag: u32) -> Option<(u16, u32)> {
+    match strat {
+        Strategy::Dijkstra => Some(first_min(c)),
+        Strategy::Ecmp => Some(ecmp(c, bag)),
+        Strategy::Congestion | Strategy::Deadline => None,
+    }
 }
 
 fn first_min(c: &[(u16, u32, u64)]) -> (u16, u32) {
@@ -151,6 +189,10 @@ struct G<'a> {
     edge_up: Vec<bool>,
     eidx: Vec<Vec<usize>>,
     done: u64,
+    /// Operational parallel mode: per-bag values computed before the loop. Read-only here.
+    pre: Option<&'a Precomputed>,
+    /// Per bag, the index of its next precomputed hop (used only with precomputed routes).
+    cursor: Vec<u8>,
     obs: Option<Collector>, // observation only; never read by the simulation
 }
 
@@ -161,13 +203,7 @@ impl<'a> G<'a> {
     }
 
     fn dur_ms(&self, bag: u32, node: usize) -> u32 {
-        let nd = &self.nodes[node];
-        let st = stage(nd.kind);
-        let mut d = lognormal(self.seed, bag, st, 0, nd.mean_service_ms as f64);
-        if let Some(hold) = inspection_ms(self.seed, bag, nd.kind) {
-            d += hold;
-        }
-        (d as u64).max(1).min(u32::MAX as u64) as u32
+        service_ms(self.seed, bag, &self.nodes[node])
     }
 
     fn key(&self, bag: u32, dur: u32) -> u64 {
@@ -206,22 +242,13 @@ impl<'a> G<'a> {
 
     fn next_hop(&self, t: u64, bag: u32, u: usize) -> (u16, u32) {
         let b = bag as usize;
-        let li = self.bags.flight[b] as usize % self.loaders.len();
-        let row = &self.dist[li];
-        let all: Vec<(u16, u32, u64, bool)> = self.out[u]
-            .iter()
-            .enumerate()
-            .filter(|(_, (v, _))| row[*v as usize] < INF)
-            .map(|(i, (v, tr))| (*v, *tr, *tr as u64 + row[*v as usize], self.edge_up[self.eidx[u][i]]))
-            .collect();
-        let mut c: Vec<(u16, u32, u64)> = all.iter().filter(|x| x.3).map(|x| (x.0, x.1, x.2)).collect();
-        if c.is_empty() {
-            c = all.iter().map(|x| (x.0, x.1, x.2)).collect(); // no live alternative: use the edge anyway
-        }
-        debug_assert!(!c.is_empty());
+        let li = match self.pre {
+            Some(p) => p.loader[b] as usize, // flight grouping, precomputed
+            None => self.bags.flight[b] as usize % self.loaders.len(),
+        };
+        let c = candidates(&self.out[u], &self.eidx[u], &self.edge_up, &self.dist[li]);
         match self.strat {
-            Strategy::Dijkstra => first_min(&c),
-            Strategy::Ecmp => ecmp(&c, bag),
+            Strategy::Dijkstra | Strategy::Ecmp => static_pick(self.strat, &c, bag).expect("static strategy"),
             Strategy::Congestion => self.dynamic(&c),
             Strategy::Deadline => {
                 let slack = self.bags.deadline_s[b] as i64 * 1000 - t as i64;
@@ -271,7 +298,14 @@ impl<'a> G<'a> {
         if let Some(c) = &mut self.obs {
             c.arrive(t, bag, n);
         }
-        let dur = self.dur_ms(bag, n);
+        let dur = match self.pre.and_then(|p| p.routes.as_ref()) {
+            Some(r) => {
+                let h = r.hop(bag, self.cursor[bag as usize]);
+                debug_assert_eq!(h.node, node);
+                h.dur
+            }
+            None => self.dur_ms(bag, n),
+        };
         if self.busy[n] < self.cap[n] {
             self.start(t, bag, node, dur, t);
         } else {
@@ -312,7 +346,14 @@ impl<'a> G<'a> {
             self.done += 1;
             return;
         }
-        let (to, travel) = self.next_hop(t, bag, n);
+        let (to, travel) = match self.pre.and_then(|p| p.routes.as_ref()) {
+            Some(r) => {
+                let h = r.hop(bag, self.cursor[bag as usize]);
+                self.cursor[bag as usize] += 1;
+                (h.next, h.travel)
+            }
+            None => self.next_hop(t, bag, n),
+        };
         if let Some(c) = &mut self.obs {
             let i = self.out[n].iter().position(|x| x.0 == to).expect("hop uses a known edge");
             c.edge(self.eidx[n][i]);
@@ -342,7 +383,13 @@ pub fn run(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, polic
 }
 
 pub fn run_with(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage]) -> RunStats {
-    simulate(bags, nodes, edges, strat, policy, seed, outages, None, None).0
+    simulate(bags, nodes, edges, strat, policy, seed, outages, None, None, None).0
+}
+
+/// `run_with` using values from the operational precompute. Same `RunStats` as `run_with`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_pre(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], pre: &Precomputed) -> RunStats {
+    simulate(bags, nodes, edges, strat, policy, seed, outages, None, None, Some(pre)).0
 }
 
 /// Progress is reported every this many events, and once at the end.
@@ -354,15 +401,25 @@ pub type Progress<'a> = &'a mut dyn FnMut(u64, u64);
 /// `run_with` plus optional observation. The `RunStats` are the same as `run_with` returns.
 #[allow(clippy::too_many_arguments)]
 pub fn run_collected(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], opts: CollectOptions, progress: Option<Progress>) -> (RunStats, Collected) {
+    run_collected_pre(bags, nodes, edges, strat, policy, seed, outages, opts, progress, None)
+}
+
+/// `run_collected`, optionally using values from the operational precompute.
+#[allow(clippy::too_many_arguments)]
+pub fn run_collected_pre(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], opts: CollectOptions, progress: Option<Progress>, pre: Option<&Precomputed>) -> (RunStats, Collected) {
     let first_ms = bags.arrival_s.iter().min().map_or(0, |&a| a as u64 * 1000);
     let obs = Collector::new(opts, bags.len(), first_ms, nodes, edges);
-    let (stats, obs) = simulate(bags, nodes, edges, strat, policy, seed, outages, Some(obs), progress);
+    let (stats, obs) = simulate(bags, nodes, edges, strat, policy, seed, outages, Some(obs), progress, pre);
     (stats, obs.expect("collector was passed in").finish())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn simulate(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], obs: Option<Collector>, mut progress: Option<Progress>) -> (RunStats, Option<Collector>) {
+fn simulate(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, policy: Policy, seed: u64, outages: &[Outage], obs: Option<Collector>, mut progress: Option<Progress>, pre: Option<&Precomputed>) -> (RunStats, Option<Collector>) {
     let nn = nodes.len();
+    if let Some(p) = pre {
+        assert_eq!(p.arrival_ms.len(), bags.len(), "precompute is for a different bag table");
+        assert_eq!((p.seed, p.strategy), (seed, strat), "precompute is for a different seed or strategy");
+    }
     let (out, _) = adjacency(nn, edges);
     let (loaders, dist) = dijkstra_table(nodes, edges);
     let mut eidx: Vec<Vec<usize>> = vec![Vec::new(); nn];
@@ -393,10 +450,17 @@ fn simulate(bags: &BagSoA, nodes: &[Node], edges: &[Edge], strat: Strategy, poli
         edge_up: vec![true; edges.len()],
         eidx,
         done: 0,
+        pre,
+        cursor: if pre.is_some_and(|p| p.routes.is_some()) { vec![0; bags.len()] } else { Vec::new() },
         obs,
     };
+    // Pushed one by one in bag order: the push order fixes `seq`, which breaks time ties.
     for i in 0..bags.len() {
-        g.push(bags.arrival_s[i] as u64 * 1000, EventKind::Arrival, i as u32, 0);
+        let t = match pre {
+            Some(p) => p.arrival_ms[i], // check-in registration, precomputed
+            None => bags.arrival_s[i] as u64 * 1000,
+        };
+        g.push(t, EventKind::Arrival, i as u32, 0);
     }
     for (i, o) in outages.iter().enumerate() {
         let nd = match o.target { Target::Node(x) => x, Target::Edge(_) => 0 };

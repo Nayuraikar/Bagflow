@@ -17,6 +17,7 @@ import {
   PerformanceLabPage,
   BackendComparisonPage,
   GuidedDemoPage,
+  ParallelOperationsPage,
 } from './lazyPages'
 
 const BUILT: Record<string, ReactElement> = {
@@ -31,6 +32,7 @@ const BUILT: Record<string, ReactElement> = {
   '/performance/backends': <BackendComparisonPage />,
   '/operations/parallel-studio': <ParallelStudioPage />,
   '/operations/stages': <StageExplorerPage />,
+  '/operations/parallel-operations': <ParallelOperationsPage />,
 }
 
 export const router = createBrowserRouter([

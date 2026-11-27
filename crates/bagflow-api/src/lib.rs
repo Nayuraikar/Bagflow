@@ -250,7 +250,7 @@ fn job_json(s: &AppState, r: &Record) -> Value {
 async fn simulation(State(s): App, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let r = s.jobs.record(&id, Kind::Simulation)?;
     let mut out = job_json(&s, &r);
-    for key in ["dataset", "engine_checksum", "sim_wall_s", "summary", "pipeline"] {
+    for key in ["dataset", "engine_checksum", "sim_wall_s", "summary", "pipeline", "operational"] {
         out[key] = r.result.as_ref().map_or(Value::Null, |x| x[key].clone());
     }
     out["retained"] = json!(s.jobs.retained(&id).is_some());

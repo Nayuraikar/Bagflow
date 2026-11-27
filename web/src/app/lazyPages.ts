@@ -9,4 +9,5 @@ export const HistoryPage = lazy(() => import('../pages/HistoryPage').then((m) =>
 export const ScenarioStudioPage = lazy(() => import('../pages/ScenarioStudioPage').then((m) => ({ default: m.ScenarioStudioPage })))
 export const ParallelSweepsPage = lazy(() => import('../pages/ParallelSweepsPage').then((m) => ({ default: m.ParallelSweepsPage })))
 export const PerformanceLabPage = lazy(() => import('../pages/PerformanceLabPage').then((m) => ({ default: m.PerformanceLabPage })))
+export const ParallelOperationsPage = lazy(() => import('../pages/ParallelOperationsPage').then((m) => ({ default: m.ParallelOperationsPage })))
 export const BackendComparisonPage = lazy(() => import('../pages/BackendComparisonPage').then((m) => ({ default: m.BackendComparisonPage })))

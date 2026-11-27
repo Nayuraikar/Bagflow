@@ -79,6 +79,8 @@ export interface SimulationConfig {
   /** Left to the API's defaults when absent. */
   threads?: number
   classifyBackend?: string
+  operationalParallel?: boolean
+  workers?: number
 }
 
 export interface SimulationSummary {
@@ -135,7 +137,7 @@ export type ParallelRun = RunBase & {
 export type BenchmarkRun = RunBase & { kind: 'benchmark'; backends: string[]; bagCount: number; summary: BenchmarkSummary | null }
 export type Run = SimulationRun | SweepRun | ParallelRun | BenchmarkRun
 
-export type PhaseId = 'generate' | 'classify' | 'simulate' | 'aggregate'
+export type PhaseId = 'generate' | 'classify' | 'precompute' | 'simulate' | 'aggregate'
 
 export interface PipelinePhase {
   id: PhaseId
@@ -177,6 +179,33 @@ export interface Simulation {
   summary: SimulationSummary | null
   /** `null` until done, and on runs saved before the pipeline was measured. */
   pipeline: Pipeline | null
+  /** `null` on runs saved before operational parallel mode existed. */
+  operational: Operational | null
   progress: JobProgress | null
   error: string | null
+}
+
+export interface OperationalTask {
+  id: number
+  kind: string
+  worker: number
+  startMs: number
+  endMs: number
+  size: number
+}
+
+/** What ran where in one simulation; measured by the API. */
+export interface Operational {
+  enabled: boolean
+  /** Sequential event loop. */
+  desMs: number
+  /** Parallel precompute median + event loop; the event loop alone without the mode. */
+  totalMs: number
+  routesPrecomputable: boolean
+  routesNote: string | null
+  workers: number | null
+  routesPrecomputed: boolean
+  parallelParts: string[]
+  precompute: { sequentialMs: number; parallelMs: number; speedup: number; efficiency: number; identical: boolean } | null
+  tasks: OperationalTask[]
 }

@@ -673,3 +673,37 @@ async fn three_fixed_configs_keep_their_results() {
         assert_eq!(int(&e["result"]["delayed_bags"]), delayed);
     }
 }
+
+/// Operational parallel mode through the HTTP API: same pinned results, precompute phase
+/// and task telemetry reported; dynamic routing keeps its routes in the loop.
+#[tokio::test]
+async fn operational_parallel_keeps_results_and_reports_tasks() {
+    let dir = TempDir::new("operational");
+    let app = server(&dir, 1);
+    let cases = [
+        ("Normal", "dijkstra", 100, 9_245, "61aa19cce7723683", true),
+        ("Normal", "congestion", 70, 134_427, "29e8786b1e8e3fae", false),
+    ];
+    for (scenario, routing, pct, delayed, checksum, routes) in cases {
+        let id = submit(&app, "/api/simulations", json!({
+            "scenario": scenario, "routing": routing, "policy": "fcfs", "capacity_pct": pct, "bag_count": 250000,
+            "operational_parallel": true, "workers": 4
+        })).await;
+        let r = wait_done(&app, &format!("/api/simulations/{id}")).await;
+        assert_eq!(r["engine_checksum"], checksum, "{scenario}/{routing}");
+        assert_eq!(int(&r["summary"]["delayed_bags"]), delayed);
+        let m = get(&app, &format!("/api/simulations/{id}/metrics")).await;
+        let op = &m["operational"];
+        assert_eq!(op["enabled"], true);
+        assert_eq!(op["workers"], 4);
+        assert_eq!(op["routes_precomputed"], routes);
+        assert_eq!(op["precompute"]["identical_to_sequential"], true);
+        let tasks = op["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), if routes { 3 } else { 2 } * 4 * 4);
+        assert!(tasks.iter().all(|t| int(&t["worker"]) < 4 && t["end_ms"].as_f64() >= t["start_ms"].as_f64()));
+        assert!(m["pipeline"]["phases"].as_array().unwrap().iter().any(|p| p["id"] == "precompute"));
+    }
+    let bad = json!({ "operational_parallel": true, "workers": 0, "bag_count": 1000 });
+    let (status, _) = send(&app, "POST", "/api/simulations", Some(&bad.to_string())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

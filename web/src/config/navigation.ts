@@ -3,7 +3,7 @@
 
 import {
   Activity, Boxes, Cpu, FlaskConical, Gauge, GitCompare, Grid3x3, History, Layers, LayoutDashboard,
-  Luggage, Network, PlayCircle, TrafficCone, type LucideIcon,
+  Luggage, Network, PlayCircle, TrafficCone, Workflow, type LucideIcon,
 } from 'lucide-react'
 
 export interface Destination {
@@ -61,6 +61,15 @@ const operations: PlannedPage[] = [
     path: '/operations/congestion', label: 'Congestion Analysis', icon: TrafficCone, priority: 7,
     source: 'blueprint.md page 5',
     shows: ['Utilisation, queue length and waiting-time charts', 'Bottleneck ranking linked to the Airport Network'],
+  },
+  {
+    path: '/operations/parallel-operations', label: 'Parallel Airport Operations', icon: Workflow, priority: null,
+    source: 'operational parallel mode (engine2 precompute)',
+    shows: [
+      'Sequential and operational-parallel runs of the same configuration, with measured times and a checksum check',
+      'Replay of the real precompute tasks per worker',
+      'Which facilities run in parallel and which stay sequential',
+    ],
   },
 ]
 
