@@ -1,22 +1,26 @@
-import { Suspense, useState } from "react";
-import { Outlet, useLocation } from "react-router";
-import Sidebar from "./Sidebar";
-import Topbar from "./Topbar";
+import { Outlet } from 'react-router'
+import { useApiState, useHealth } from '../hooks/useHealth'
+import { Sidebar } from './Sidebar'
+import { Topbar } from './Topbar'
 
-export default function DashboardLayout() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const { pathname } = useLocation();
+export function DashboardLayout() {
+  const api = useApiState()
+  const loadedBefore = useHealth().data !== undefined
   return (
-    <div className="flex min-h-screen">
-      <Sidebar open={menuOpen} onNavigate={() => setMenuOpen(false)} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onMenu={() => setMenuOpen((o) => !o)} />
-        <main className="flex-1">
-          <Suspense key={pathname} fallback={<p className="p-8 text-sm text-muted">Loading...</p>}>
-            <Outlet />
-          </Suspense>
+    <div className="min-h-screen md:flex">
+      <Sidebar />
+      <div className="min-w-0 flex-1">
+        <Topbar api={api} />
+        {api === 'offline' && (
+          <div role="alert" className="border-b border-critical/40 bg-critical/10 px-4 py-3 text-sm md:px-8">
+            <strong>API unreachable.</strong> {loadedBefore && 'Values already on screen were loaded earlier and may be out of date. '}Start the API with{' '}
+            <code className="font-mono">cargo run --release -p bagflow-api</code>; this page reconnects by itself.
+          </div>
+        )}
+        <main className="mx-auto max-w-6xl p-4 md:p-8">
+          <Outlet />
         </main>
       </div>
     </div>
-  );
+  )
 }

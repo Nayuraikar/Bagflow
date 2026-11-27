@@ -1,20 +1,14 @@
-/** Shown wherever a value is unavailable. */
-export const NA = "--";
+/** Shown wherever there is no value. */
+export const EMPTY = '--'
 
-export const formatInt = (v: number | null | undefined) =>
-  v === null || v === undefined ? NA : Math.round(v).toLocaleString("en-US");
+type Num = number | null | undefined
 
-export const formatPct = (v: number | null | undefined, digits = 1) =>
-  v === null || v === undefined ? NA : `${v.toFixed(digits)}%`;
+const fmt = (v: Num, f: (n: number) => string) => (v === null || v === undefined || !Number.isFinite(v) ? EMPTY : f(v))
 
-/** Simulation time (ms since midnight of the synthetic day) as HH:MM, with +Nd past midnight. */
-export function formatSimTime(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  const days = Math.floor(minutes / 1440);
-  const pad = (v: number) => String(v).padStart(2, "0");
-  return `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}${days ? ` +${days}d` : ""}`;
-}
-
-/** Wall-clock time of a job (Unix ms). */
-export const formatDateTime = (ms: number | null | undefined) =>
-  ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" }) : NA;
+export const int = (v: Num) => fmt(v, (n) => n.toLocaleString('en-US'))
+export const fixed = (v: Num, digits: number) => fmt(v, (n) => n.toFixed(digits))
+export const times = (v: Num, digits = 2) => fmt(v, (n) => `${n.toFixed(digits)}x`)
+/** `v` is already in percent. */
+export const pct = (v: Num, digits = 1) => fmt(v, (n) => `${n.toFixed(digits)}%`)
+export const ms = (v: Num) => fmt(v, (n) => `${n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)} ms`)
+export const dateTime = (v: Num) => fmt(v, (n) => new Date(n).toLocaleString())

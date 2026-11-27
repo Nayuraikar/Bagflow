@@ -1,6 +1,0 @@
-/* Scoped: these rules apply only inside the Concept demos wrapper. */
-.legacy-demo {
-  & { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
-  & { margin: 0; background: #020617; color: #e2e8f0; }
-  & { max-width: 1040px; margin: 0 auto; padding: 16px; }
-}

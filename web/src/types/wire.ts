@@ -1,96 +1,143 @@
-// The Rust API's JSON (snake_case), limited to the fields the adapters read.
-// Only services/ should import this file.
+// JSON exactly as crates/bagflow-api serves it. Only the fields this app reads are listed.
+// Nothing outside services/ should import this file.
 
-import type { BaggageStatus, FacilityStatus, JobStatus } from "./models";
-
-export interface WireProgress { status: JobStatus; phase: string; done: number; total: number; error: string | null }
+export type WireJobStatus = 'queued' | 'running' | 'done' | 'failed'
 
 export interface WireHealth {
-  status: string;
-  version: string;
-  engine: string;
-  debug_build: boolean;
-  machine: { os: string; arch: string; logical_cores: number };
-  backends: { id: string; available: boolean; detail: string | null; reason: string | null }[];
-  queue: { running: string | null; queued: number };
-  last_simulation: { id: string; finished_at_ms: number | null } | null;
+  status: string
+  version: string
+  engine: string
+  debug_build: boolean
+  machine: { os: string; arch: string; logical_cores: number }
+  backends: {
+    id: string
+    available: boolean
+    detail: string | null
+    reason: string | null
+    takes_threads: boolean
+    gpu: boolean
+  }[]
+  queue: { running: string | null; queued: number; max_queued: number }
+  last_simulation: { id: string; finished_at_ms: number | null } | null
+}
+
+/** Data of the `progress`, `done` and `failed` server-sent events, and `progress` on a job record. */
+export interface WireProgress {
+  status: WireJobStatus
+  phase: string
+  done: number
+  total: number
+  error: string | null
 }
 
 export interface WireSimConfig {
-  scenario: string; routing: string; policy: string;
-  capacity_pct: number; server_multiplier: number; bag_count: number;
+  scenario: string
+  routing: string
+  policy: string
+  capacity_pct: number
+  server_multiplier: number
+  bag_count: number
+  /** Absent on records saved before these fields existed. */
+  threads?: number
+  classify_backend?: string
 }
 
-export interface WireBenchConfig {
-  bag_count: number; backends: string[]; threads: number[]; repetitions: number; warmup: number;
+export interface WireSimSummary {
+  total_bags: number
+  loaded_on_time: number
+  delayed_bags: number
+  delayed_pct: number
+  on_time_loading_rate: number
+  congested_facilities: number
 }
 
-export interface WireSummary {
-  total_bags: number; processed_bags: number; in_transit: number; delayed_bags: number; loaded_on_time: number;
-  average_waiting_time_s: number; on_time_loading_rate: number; delayed_pct: number;
-  congested_facilities: number; max_queue: number; end_ms: number | null;
+export interface WireSweepSummary {
+  experiment_count: number
+  passes: { threads: number; wall_ms: number; speedup: number }[]
+  consistency: { checked: boolean; compared_runs: number; all_identical: boolean | null }
 }
 
-export interface WireStatusRule { source: string; window_samples: number; high_at: number; congested_at: number }
+export interface WireParallelSummary {
+  workload: string
+  backend: string
+  threads: number | null
+  bags: number
+  wall_ms: number
+  speedup: number
+  matches_sequential: boolean
+}
+
+export interface WireBenchSummary {
+  workload_size: number
+  results: {
+    backend: string
+    threads: number | null
+    median_ms: number
+    speedup: number | null
+    output_identical_to_scalar: boolean
+  }[]
+}
 
 interface WireRecordBase {
-  id: string; status: JobStatus; created_at_ms: number; finished_at_ms: number | null;
-  config_hash: string; error: string | null; progress: WireProgress | null; retained: boolean;
+  id: string
+  status: WireJobStatus
+  created_at_ms: number
+  started_at_ms: number | null
+  finished_at_ms: number | null
+  config_hash: string
+  error: string | null
+  progress: WireProgress | null
+  retained: boolean
 }
 
-export type WireHistoryItem =
-  | (WireRecordBase & { kind: "simulation"; config: WireSimConfig; summary: WireSummary | null })
-  | (WireRecordBase & { kind: "benchmark"; config: WireBenchConfig });
+export type WireHistoryItem = WireRecordBase &
+  (
+    | { kind: 'simulation'; config: WireSimConfig; summary: WireSimSummary | null }
+    | { kind: 'sweep'; config: { bag_count: number }; summary: WireSweepSummary | null }
+    | { kind: 'parallel'; config: { workload: string; bag_count: number }; summary: WireParallelSummary | null }
+    | { kind: 'benchmark'; config: { bag_count: number; backends: string[] }; summary: WireBenchSummary | null }
+  )
 
-export interface WireSimulationMetrics { id: string; summary: WireSummary; status_rule: WireStatusRule }
-
-export interface WireBag {
-  id: number; passenger_id: number; flight_id: number; redirected: boolean; priority: string;
-  arrival_ms: number; deadline_ms: number; departure_ms: number | null; status: BaggageStatus | null;
-  current_node: number | null; loading_node: number | null; overdue: boolean; wait_ms: number;
+export interface WirePhase {
+  id: 'generate' | 'classify' | 'simulate' | 'aggregate'
+  name: string
+  has_parallel_implementation: boolean
+  backend: string
+  /** `null` for GPU backends. */
+  threads: number | null
+  time_ms: number
+  samples_ms: number[]
+  baseline: { backend: string; threads: number; time_ms: number; samples_ms: number[] } | null
+  speedup: number | null
+  identical_to_baseline: boolean | null
+  bags: number
+  /** `simulate` only. */
+  why_sequential?: string
+  /** `aggregate` only. */
+  verified_against_engine?: boolean
 }
 
-export interface WireBaggagePage {
-  page: number; page_size: number; total: number; at_ms: number | null;
-  counts: {
-    total: number; not_arrived: number; waiting: number; in_service: number; travelling: number;
-    in_system: number; loaded_on_time: number; delayed: number;
-  };
-  items: WireBag[];
+export interface WirePipeline {
+  workload: { bags_generated: number; bags_simulated: number }
+  threads: number
+  machine: { os: string; arch: string; logical_cores: number }
+  debug_build: boolean
+  phases: WirePhase[]
+  other_sequential: { time_ms: number; scenario_setup_ms: number; summarise_ms: number }
+  full: { baseline_ms: number; parallel_ms: number; speedup: number }
+  amdahl: {
+    parallelisable_fraction: number
+    sequential_fraction: number
+    max_speedup: number
+    eligible_phases_speedup: number
+  }
 }
 
-export interface WireNode {
-  id: number; name: string; type: string; x: number; y: number; capacity: number; queue_length: number | null;
-  processing_rate_per_s: number; utilisation: number | null; status: FacilityStatus | null;
-  max_queue: number; avg_wait_s: number;
-}
-
-export interface WireEdge {
-  id: string; source: number; target: number; travel_time_ms: number; capacity: number | null;
-  traffic_total: number; available: boolean;
-}
-
-export interface WireNetwork { at_ms: number | null; nodes: WireNode[]; edges: WireEdge[]; status_rule: WireStatusRule }
-
-export interface WireTimeStats { mean: number; median: number; std: number | null; min: number; max: number }
-
-export interface WireBenchRow {
-  backend: string; threads: number | null; output_identical_to_scalar: boolean;
-  time_ms: WireTimeStats; throughput_bags_per_s: number; speedup: number;
-  parallel_efficiency_pct: number | null; efficiency_baseline: string | null;
-  gpu: null | {
-    device: string | null; copy_in_ms: WireTimeStats; kernel_ms: WireTimeStats;
-    launch_overhead_ms: WireTimeStats; copy_out_ms: WireTimeStats; note: string;
-  };
-  memory_usage_bytes: number | null;
-}
-
-export interface WireBenchMetrics {
-  id: string; workload_size: number; repetitions: number; warmup: number; results: WireBenchRow[];
-}
-
-export interface WireStaticRow {
-  machine: string; source_file: string; kind: "kernel" | "mpi"; label: string; bags: number; statistic: string;
-  time_ms: number | null; speedup: number | null; speedup_baseline: string; ranks: number | null;
-  compute_ms: number | null; output_identical: boolean | null;
+/** `GET /api/simulations/:id`. The result fields are `null` until the job is done. */
+export interface WireSimulation extends WireRecordBase {
+  kind: 'simulation'
+  config: WireSimConfig
+  engine_checksum: string | null
+  summary: WireSimSummary | null
+  pipeline: WirePipeline | null
 }

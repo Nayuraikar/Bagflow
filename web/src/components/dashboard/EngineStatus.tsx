@@ -1,37 +1,82 @@
-import Card from "../common/Card";
-import ProvenanceBadge from "../common/ProvenanceBadge";
-import { useHealth } from "../../hooks/useHealth";
-import { formatDateTime, NA } from "../../utils/format";
+import { useHealth } from '../../hooks/useHealth'
+import { dateTime, int } from '../../utils/format'
+import { Card, CardTitle } from '../common/Card'
+import { DataState } from '../common/DataState'
+import { StatusLabel } from '../common/StatusLabel'
 
-export default function EngineStatus() {
-  const { data, error } = useHealth();
-  // after a failed refetch the old data is still there, so the error decides
-  const health = error ? undefined : data;
-  const online = health?.status === "ok";
-  const facts: [string, string][] = [
-    ["Engine", health ? health.engine : NA],
-    ["Machine", health ? `${health.os} ${health.arch}, ${health.logicalCores} logical cores` : NA],
-    ["Jobs", health ? `${health.runningJob ? "1 running" : "idle"}, ${health.queuedJobs} queued` : NA],
-    ["Kernel backends for benchmarks", health ? `${health.backends.filter((b) => b.available).length} of ${health.backends.length} available` : NA],
-    ["Last simulation finished", formatDateTime(health?.lastSimulation?.finishedAt)],
-  ];
+export function EngineStatus() {
+  const { data, error } = useHealth()
+  if (!data) {
+    return (
+      <Card>
+        <CardTitle>Engine status</CardTitle>
+        <DataState error={error} />
+      </Card>
+    )
+  }
+  const available = data.backends.filter((b) => b.available)
+  const unavailable = data.backends.filter((b) => !b.available)
   return (
     <Card>
-      <div className="flex flex-wrap items-center gap-3">
-        <span aria-hidden className={`size-2.5 rounded-full ${online ? "bg-ops" : error ? "bg-critical" : "bg-line"}`} />
-        <h2>{online ? `Engine online (API ${health.version})` : error ? "Engine offline" : "Checking engine..."}</h2>
-        <ProvenanceBadge kind="real" />
-      </div>
-      {error && <p role="alert" className="mt-2 text-sm text-critical">{error.message}</p>}
-      {health?.debugBuild && <p className="mt-2 text-sm text-critical">The API is a debug build: its timings are not meaningful.</p>}
-      <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
-        {facts.map(([label, value]) => (
-          <div key={label}>
-            <dt className="text-muted">{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
+      <CardTitle>Engine status</CardTitle>
+      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <dt className="text-muted">Machine</dt>
+          <dd className="flex flex-wrap items-center gap-2">
+            <span>
+              {data.machine.os} / {data.machine.arch}, <span className="font-mono">{int(data.machine.logicalCores)}</span> logical cores
+            </span>
+            <StatusLabel status="Measured" />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted">Engine</dt>
+          <dd>
+            {data.engine}, API <span className="font-mono">{data.version}</span> <StatusLabel status="Implemented" />
+            {data.debugBuild && <span className="block text-critical">Debug build: timings are not representative.</span>}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted">Job queue (one job runs at a time)</dt>
+          <dd className="flex flex-wrap items-center gap-2">
+            <span>
+              {data.queue.runningJobId ? <>running <span className="font-mono break-all">{data.queue.runningJobId}</span></> : 'idle'},{' '}
+              <span className="font-mono">{int(data.queue.queued)}</span> of <span className="font-mono">{int(data.queue.maxQueued)}</span> waiting
+            </span>
+            <StatusLabel status="Measured" />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted">Last simulation finished</dt>
+          <dd className="flex flex-wrap items-center gap-2">
+            <span className="font-mono">{dateTime(data.lastSimulation?.finishedAt)}</span>
+            {data.lastSimulation && <StatusLabel status="Measured" />}
+          </dd>
+        </div>
       </dl>
+
+      <h3 className="mt-5 mb-2 flex items-center gap-2 text-sm font-semibold">
+        Kernel backends available <StatusLabel status="Implemented" />
+      </h3>
+      <ul className="flex flex-wrap gap-2">
+        {available.map((b) => (
+          <li key={b.id} className="rounded-lg border border-line px-2.5 py-1 font-mono text-xs">
+            {b.id}
+            {b.detail && <span className="text-muted"> · {b.detail}</span>}
+          </li>
+        ))}
+      </ul>
+
+      <h3 className="mt-4 mb-2 flex items-center gap-2 text-sm font-semibold">
+        Not available <StatusLabel status="Unavailable" />
+      </h3>
+      <ul className="grid gap-1 text-sm sm:grid-cols-2">
+        {unavailable.map((b) => (
+          <li key={b.id}>
+            <span className="font-mono text-xs">{b.id}</span> <span className="text-muted">— {b.reason ?? 'no reason given'}</span>
+          </li>
+        ))}
+      </ul>
     </Card>
-  );
+  )
 }

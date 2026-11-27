@@ -1,10 +1,8 @@
-import { Link } from "react-router";
-import PageContainer from "../layouts/PageContainer";
+import { Link } from 'react-router'
 
-export default function NotFoundPage() {
-  return (
-    <PageContainer title="Page not found">
-      <Link to="/dashboard" className="text-sm text-perf underline">Go to the overview</Link>
-    </PageContainer>
-  );
-}
+export const NotFoundPage = () => (
+  <div className="space-y-3">
+    <h1 className="text-2xl font-bold">Page not found</h1>
+    <Link to="/" className="text-sm text-perf underline">Back to the Main Dashboard</Link>
+  </div>
+)
