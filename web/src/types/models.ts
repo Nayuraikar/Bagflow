@@ -1,5 +1,7 @@
 // What the UI works with. services/adapters.ts builds these from the wire types.
 
+import type { SweepRequest } from './sweep'
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
 
 export interface Backend {
@@ -29,6 +31,25 @@ export interface Health {
     bagCount: [number, number]
     aggregateBagCount: [number, number]
     repetitions: [number, number]
+    threads: [number, number]
+  }
+  sweep: {
+    scenarios: string[]
+    routings: string[]
+    policies: string[]
+    defaults: SweepRequest
+    bagCount: [number, number]
+    capacityPct: [number, number]
+    serverMultiplier: [number, number]
+    threads: [number, number]
+    maxThreadCounts: number
+    maxExperiments: number
+    maxSimulatedBags: number
+  }
+  benchmark: {
+    bagCount: [number, number]
+    repetitions: [number, number]
+    warmup: [number, number]
     threads: [number, number]
   }
 }
@@ -89,7 +110,8 @@ interface RunBase {
 }
 
 export type SimulationRun = RunBase & { kind: 'simulation'; config: SimulationConfig; summary: SimulationSummary | null }
-export type SweepRun = RunBase & { kind: 'sweep'; bagCount: number; summary: SweepSummary | null }
+/** `configHash` is equal for sweeps with the same settings. */
+export type SweepRun = RunBase & { kind: 'sweep'; configHash: string; bagCount: number; summary: SweepSummary | null }
 export type ParallelRun = RunBase & { kind: 'parallel'; workload: string; bagCount: number; summary: ParallelSummary | null }
 export type BenchmarkRun = RunBase & { kind: 'benchmark'; backends: string[]; bagCount: number; summary: BenchmarkSummary | null }
 export type Run = SimulationRun | SweepRun | ParallelRun | BenchmarkRun

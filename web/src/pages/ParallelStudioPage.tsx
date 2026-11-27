@@ -3,10 +3,11 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { Card } from '../components/common/Card'
 import { DataState } from '../components/common/DataState'
+import { JobState } from '../components/common/JobState'
 import { StatusLabel } from '../components/common/StatusLabel'
 import { BackendComparison } from '../components/parallel/BackendComparison'
 import { ChecksumVerifier } from '../components/parallel/ChecksumVerifier'
-import { JobState } from '../components/parallel/JobState'
+import { RunningRepetitions } from '../components/parallel/RunningRepetitions'
 import { ParallelSpeedupCard } from '../components/parallel/ParallelSpeedupCard'
 import { TimelineView } from '../components/parallel/TimelineView'
 import { WorkloadInput } from '../components/parallel/WorkloadInput'
@@ -71,7 +72,12 @@ export function ParallelStudioPage() {
   if (!runId) {
     result = <Card><p className="text-sm text-muted">{EMPTY} No run selected. Choose a workload and press Measure.</p></Card>
   } else if (!m || m.id !== runId) {
-    result = <JobState id={runId} job={job.data} jobError={job.error} metricsError={metrics.error} />
+    result = (
+      <JobState
+        id={runId} job={job.data} jobError={job.error} metricsError={metrics.error}
+        running={<RunningRepetitions job={job.data} title="Running: sequential and selected alternate" unit="executions, warm-ups included" />}
+      />
+    )
   } else {
     result = (
       <div className="space-y-4">

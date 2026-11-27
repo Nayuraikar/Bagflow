@@ -1,7 +1,14 @@
 // Pure mapping from the Rust JSON to the UI models.
 
 import type { Health, JobProgress, Pipeline, PipelinePhase, Run, Simulation, SimulationConfig, SimulationSummary } from '../types/models'
+import type { SweepRequest } from '../types/sweep'
+import type { WireSweepConfig } from '../types/wireSweep'
 import type { WireHealth, WireHistoryItem, WirePhase, WirePipeline, WireProgress, WireSimConfig, WireSimSummary, WireSimulation } from '../types/wire'
+
+export const toSweepRequest = (w: WireSweepConfig): SweepRequest => ({
+  scenarios: w.scenarios, routings: w.routings, policies: w.policies, capacityPcts: w.capacity_pcts,
+  serverMultiplier: w.server_multiplier, bagCount: w.bag_count, threads: w.threads,
+})
 
 const toMachine = (m: WireHealth['machine']) => ({ os: m.os, arch: m.arch, logicalCores: m.logical_cores })
 
@@ -13,6 +20,25 @@ export const toHealth = (w: WireHealth): Health => ({
   backends: w.backends.map(({ id, available, detail, reason, gpu }) => ({ id, available, detail, reason, gpu })),
   queue: { runningJobId: w.queue.running, queued: w.queue.queued, maxQueued: w.queue.max_queued },
   lastSimulation: w.last_simulation && { id: w.last_simulation.id, finishedAt: w.last_simulation.finished_at_ms },
+  sweep: {
+    scenarios: w.options.scenarios,
+    routings: w.options.routings,
+    policies: w.options.policies,
+    defaults: toSweepRequest(w.options.sweep_defaults),
+    bagCount: w.options.sweep_limits.bag_count,
+    capacityPct: w.options.sweep_limits.capacity_pct,
+    serverMultiplier: w.options.sweep_limits.server_multiplier,
+    threads: w.options.sweep_limits.threads,
+    maxThreadCounts: w.options.sweep_limits.max_thread_counts,
+    maxExperiments: w.options.sweep_limits.max_experiments,
+    maxSimulatedBags: w.options.sweep_limits.max_simulated_bags,
+  },
+  benchmark: {
+    bagCount: w.options.benchmark_limits.bag_count,
+    repetitions: w.options.benchmark_limits.repetitions,
+    warmup: w.options.benchmark_limits.warmup,
+    threads: w.options.benchmark_limits.threads,
+  },
   parallel: {
     workloads: w.options.parallel_workloads.map((x) => ({ id: x.id, backends: x.backends, chunkUnit: x.chunk_unit })),
     bagCount: w.options.parallel_limits.bag_count,
@@ -52,7 +78,7 @@ export function toRun(w: WireHistoryItem): Run {
       return { ...base, kind: w.kind, config: toSimConfig(w.config), summary: w.summary && toSummary(w.summary) }
     case 'sweep':
       return {
-        ...base, kind: w.kind, bagCount: w.config.bag_count,
+        ...base, kind: w.kind, configHash: w.config_hash, bagCount: w.config.bag_count,
         summary: w.summary && {
           experimentCount: w.summary.experiment_count,
           passes: w.summary.passes.map((p) => ({ threads: p.threads, wallMs: p.wall_ms, speedup: p.speedup })),

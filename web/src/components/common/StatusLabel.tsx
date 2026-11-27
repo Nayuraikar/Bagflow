@@ -1,8 +1,9 @@
-import { CircleCheck, CircleDashed, CircleSlash, FlaskConical, Archive, Timer, type LucideIcon } from 'lucide-react'
+import { CircleCheck, CircleDashed, CircleSlash, FlaskConical, Archive, Timer, Cpu, type LucideIcon } from 'lucide-react'
 import { STATUS_MEANING, type Status } from './status'
 
 const STYLE: Record<Status, { icon: LucideIcon; className: string }> = {
   Implemented: { icon: CircleCheck, className: 'border-ops/40 bg-ops/10' },
+  Real: { icon: Cpu, className: 'border-ops/60 bg-ops/20' },
   Measured: { icon: Timer, className: 'border-perf/40 bg-perf/10' },
   Static: { icon: Archive, className: 'border-muted/50 bg-muted/10' },
   Simplified: { icon: FlaskConical, className: 'border-warning/60 bg-warning/15' },

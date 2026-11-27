@@ -1,6 +1,8 @@
 // JSON exactly as crates/bagflow-api serves it. Only the fields this app reads are listed.
 // Nothing outside services/ should import this file.
 
+import type { WireSweepConfig } from './wireSweep'
+
 export type WireJobStatus = 'queued' | 'running' | 'done' | 'failed'
 
 export interface WireHealth {
@@ -20,6 +22,25 @@ export interface WireHealth {
   queue: { running: string | null; queued: number; max_queued: number }
   last_simulation: { id: string; finished_at_ms: number | null } | null
   options: {
+    scenarios: string[]
+    routings: string[]
+    policies: string[]
+    sweep_defaults: WireSweepConfig
+    sweep_limits: {
+      bag_count: [number, number]
+      capacity_pct: [number, number]
+      server_multiplier: [number, number]
+      threads: [number, number]
+      max_thread_counts: number
+      max_experiments: number
+      max_simulated_bags: number
+    }
+    benchmark_limits: {
+      bag_count: [number, number]
+      repetitions: [number, number]
+      warmup: [number, number]
+      threads: [number, number]
+    }
     parallel_workloads: { id: string; backends: string[]; chunk_unit: string }[]
     parallel_limits: {
       bag_count: [number, number]

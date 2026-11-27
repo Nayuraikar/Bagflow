@@ -1,13 +1,13 @@
 // View A: the workload, how it was split, who ran what and when, the merge and the check.
 
-import { Pause, Play, SkipForward } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { SPEEDS, useReplay, type Replay } from '../../hooks/useReplay'
+import { useReplay } from '../../hooks/useReplay'
 import type { Execution, ParallelMetrics } from '../../types/parallel'
-import { fixed, int, msFine } from '../../utils/format'
+import { int, msFine } from '../../utils/format'
 import { isMergeStage } from '../../utils/telemetry'
 import { Card, CardTitle } from '../common/Card'
 import { StatusLabel } from '../common/StatusLabel'
+import { ReplayControls } from '../common/ReplayControls'
 import { ChecksumVerifier } from './ChecksumVerifier'
 import { ExecutionTimeline, TimeAxis, TimelineLegend } from './ExecutionTimeline'
 import { GpuPhaseBars } from './GpuPhaseBars'
@@ -20,45 +20,6 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
       <CardTitle>{n}. {title}</CardTitle>
       {children}
     </Card>
-  )
-}
-
-function Controls({ replay, span }: { replay: Replay; span: number }) {
-  const slow = replay.slowdown
-  return (
-    <div className="space-y-2">
-      <p className="rounded-lg border border-warning/60 bg-warning/10 px-3 py-2 text-sm">
-        <strong>Replay of a measured run, not a live view.</strong> Positions come from the recorded start and end times. Speed changes only how
-        fast the replay moves, never a measured value.
-      </p>
-      <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={replay.toggle} className="flex items-center gap-2 rounded-lg bg-ops px-3 py-1.5 text-sm font-semibold text-white">
-          {replay.playing ? <Pause size={14} aria-hidden /> : <Play size={14} aria-hidden />}
-          {replay.playing ? 'Pause' : 'Play replay'}
-        </button>
-        <button type="button" onClick={() => replay.seek(span)} className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm">
-          <SkipForward size={14} aria-hidden /> Show full run
-        </button>
-        <label className="text-sm">
-          Speed{' '}
-          <select value={replay.speed} onChange={(e) => replay.setSpeed(Number(e.target.value))} className="rounded-lg border border-line px-2 py-1">
-            {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
-          </select>
-        </label>
-        <span className="text-sm">
-          Elapsed job time <span role="timer" className="inline-block min-w-24 text-right font-mono text-lg font-semibold">{msFine(replay.position)}</span>
-        </span>
-        <span className="text-xs text-muted">
-          shown {slow >= 1 ? `about ${int(Math.round(slow))}× slower` : `about ${fixed(1 / slow, 1)}× faster`} than it ran
-        </span>
-        <StatusLabel status="Measured" />
-      </div>
-      <input
-        type="range" min={0} max={span} step={span / 1000} value={replay.position}
-        onChange={(e) => replay.seek(Number(e.target.value))}
-        className="w-full accent-ops" aria-label="Replay position"
-      />
-    </div>
   )
 }
 
@@ -161,7 +122,7 @@ export function WorkloadView({ m }: { m: ParallelMetrics }) {
         </dl>
       </Step>
 
-      <Card><Controls replay={replay} span={span} /></Card>
+      <Card><ReplayControls replay={replay} span={span} /></Card>
 
       <Step n={2} title="Partition into chunks">
         {traced ? (
