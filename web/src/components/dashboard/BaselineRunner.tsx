@@ -1,9 +1,9 @@
 import { Play } from 'lucide-react'
 import { useBaselineJob } from '../../hooks/jobContext'
 import { useApiState, useHealth } from '../../hooks/useHealth'
-import { ApiError, isUnreachable } from '../../services/http'
 import type { SimulationConfig } from '../../types/models'
 import { int, pct } from '../../utils/format'
+import { submitMessage } from '../../utils/submitMessage'
 import { Card, CardTitle } from '../common/Card'
 import { StatusLabel } from '../common/StatusLabel'
 
@@ -21,12 +21,6 @@ const PHASES: Record<string, string> = {
   summarising: 'Summarising',
   done: 'Done',
   failed: 'Failed',
-}
-
-function submitMessage(e: Error) {
-  if (isUnreachable(e)) return 'API unreachable. The run was not submitted.'
-  if (e instanceof ApiError && e.code === 'queue_full') return `The job queue is full (${e.message}). Try again when a job finishes.`
-  return `The run was not accepted: ${e.message}`
 }
 
 function Progress() {

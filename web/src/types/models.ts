@@ -24,6 +24,13 @@ export interface Health {
   backends: Backend[]
   queue: { runningJobId: string | null; queued: number; maxQueued: number }
   lastSimulation: { id: string; finishedAt: number | null } | null
+  parallel: {
+    workloads: { id: string; backends: string[]; chunkUnit: string }[]
+    bagCount: [number, number]
+    aggregateBagCount: [number, number]
+    repetitions: [number, number]
+    threads: [number, number]
+  }
 }
 
 export interface JobProgress {

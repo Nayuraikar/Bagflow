@@ -19,7 +19,7 @@ function Bar({ label, value, max, color }: { label: string; value: number; max: 
   )
 }
 
-export function PhaseCard({ phase, step }: { phase: PipelinePhase; step: number }) {
+export function PhaseCard({ phase, step }: { phase: PipelinePhase; step?: number }) {
   const c = phase.comparison
   const color = PHASE_COLOR[phase.id]
   const max = Math.max(phase.timeMs, c?.sequentialMs ?? 0)
@@ -28,7 +28,7 @@ export function PhaseCard({ phase, step }: { phase: PipelinePhase; step: number 
       <div>
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           <span className="size-2.5 rounded-sm" style={{ background: color }} aria-hidden />
-          {step}. {phase.name}
+          {step !== undefined && `${step}. `}{phase.name}
         </h3>
         <p className="text-xs text-muted">{phaseMethod(phase)}</p>
       </div>

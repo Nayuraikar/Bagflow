@@ -11,4 +11,6 @@ export const times = (v: Num, digits = 2) => fmt(v, (n) => `${n.toFixed(digits)}
 /** `v` is already in percent. */
 export const pct = (v: Num, digits = 1) => fmt(v, (n) => `${n.toFixed(digits)}%`)
 export const ms = (v: Num) => fmt(v, (n) => `${n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)} ms`)
+/** For telemetry, where single tasks can take microseconds. */
+export const msFine = (v: Num) => fmt(v, (n) => `${n >= 100 ? n.toFixed(1) : n >= 10 ? n.toFixed(2) : n.toFixed(3)} ms`)
 export const dateTime = (v: Num) => fmt(v, (n) => new Date(n).toLocaleString())

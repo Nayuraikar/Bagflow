@@ -19,6 +19,15 @@ export interface WireHealth {
   }[]
   queue: { running: string | null; queued: number; max_queued: number }
   last_simulation: { id: string; finished_at_ms: number | null } | null
+  options: {
+    parallel_workloads: { id: string; backends: string[]; chunk_unit: string }[]
+    parallel_limits: {
+      bag_count: [number, number]
+      aggregate_bag_count: [number, number]
+      repetitions: [number, number]
+      threads: [number, number]
+    }
+  }
 }
 
 /** Data of the `progress`, `done` and `failed` server-sent events, and `progress` on a job record. */

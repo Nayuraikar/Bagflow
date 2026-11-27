@@ -19,7 +19,7 @@ export function PlaceholderPage({ page }: { page: PlannedPage }) {
         </ul>
         <h2 className="mt-5 mb-1 font-semibold">When it is built</h2>
         <p className="text-sm">
-          Not in the current phase (R2, the app shell).{' '}
+          Not built yet.{' '}
           {page.priority === null
             ? 'The design’s build priority list does not name this page.'
             : `Build priority ${page.priority} of 7 in parallel-studio.md §7${page.priorityNote ? ` (${page.priorityNote})` : ''}.`}{' '}

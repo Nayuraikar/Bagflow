@@ -13,6 +13,13 @@ export const toHealth = (w: WireHealth): Health => ({
   backends: w.backends.map(({ id, available, detail, reason, gpu }) => ({ id, available, detail, reason, gpu })),
   queue: { runningJobId: w.queue.running, queued: w.queue.queued, maxQueued: w.queue.max_queued },
   lastSimulation: w.last_simulation && { id: w.last_simulation.id, finishedAt: w.last_simulation.finished_at_ms },
+  parallel: {
+    workloads: w.options.parallel_workloads.map((x) => ({ id: x.id, backends: x.backends, chunkUnit: x.chunk_unit })),
+    bagCount: w.options.parallel_limits.bag_count,
+    aggregateBagCount: w.options.parallel_limits.aggregate_bag_count,
+    repetitions: w.options.parallel_limits.repetitions,
+    threads: w.options.parallel_limits.threads,
+  },
 })
 
 export const toProgress = (w: WireProgress): JobProgress => ({
