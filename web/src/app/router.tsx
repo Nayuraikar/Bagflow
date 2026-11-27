@@ -2,16 +2,28 @@ import type { ReactElement } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { PAGES } from '../config/navigation'
 import { DashboardLayout } from '../layouts/DashboardLayout'
-import { BackendComparisonPage } from '../pages/BackendComparisonPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 import { ParallelStudioPage } from '../pages/ParallelStudioPage'
-import { ParallelSweepsPage } from '../pages/ParallelSweepsPage'
-import { PerformanceLabPage } from '../pages/PerformanceLabPage'
 import { PlaceholderPage } from '../pages/PlaceholderPage'
 import { StageExplorerPage } from '../pages/StageExplorerPage'
+import {
+  AirportNetworkPage,
+  BaggageTrackerPage,
+  CongestionPage,
+  HistoryPage,
+  ScenarioStudioPage,
+  ParallelSweepsPage,
+  PerformanceLabPage,
+  BackendComparisonPage,
+} from './lazyPages'
 
 const BUILT: Record<string, ReactElement> = {
+  '/operations/network': <AirportNetworkPage />,
+  '/operations/baggage': <BaggageTrackerPage />,
+  '/operations/congestion': <CongestionPage />,
+  '/experiments/scenarios': <ScenarioStudioPage />,
+  '/experiments/history': <HistoryPage />,
   '/experiments/sweeps': <ParallelSweepsPage />,
   '/performance': <PerformanceLabPage />,
   '/performance/backends': <BackendComparisonPage />,

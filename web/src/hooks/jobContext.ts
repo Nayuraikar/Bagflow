@@ -10,7 +10,8 @@ export interface BaselineJob {
   outcome: { id: string; result: 'done' | 'failed' | 'lost'; error: string | null } | null
   submitting: boolean
   submitError: Error | null
-  submit: (config: SimulationConfig) => void
+  /** Does nothing while a simulation is already followed. */
+  submit: (config: SimulationConfig, onCreated?: (id: string) => void) => void
 }
 
 export const JobContext = createContext<BaselineJob | null>(null)

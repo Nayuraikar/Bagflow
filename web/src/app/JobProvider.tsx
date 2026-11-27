@@ -53,10 +53,10 @@ export function JobProvider({ children }: { children: ReactNode }) {
     outcome,
     submitting: create.isPending,
     submitError: create.error,
-    submit: (config) => {
+    submit: (config, onCreated) => {
       if (watchedId !== null || create.isPending) return
       setOutcome(null)
-      create.mutate(config)
+      create.mutate(config, { onSuccess: ({ id }) => onCreated?.(id) })
     },
   }
   return <JobContext value={value}>{children}</JobContext>

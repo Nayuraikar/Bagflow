@@ -3,10 +3,9 @@
 import { Link } from 'react-router'
 import type { BaggageStage, ParallelWork } from '../../config/stages'
 import { useApiState, useHealth } from '../../hooks/useHealth'
-import { useHistory } from '../../hooks/useHistory'
+import { useSelectedRun } from '../../hooks/runSelection'
 import { useLatestRunsByBackend } from '../../hooks/useParallelExecution'
 import { useSimulation } from '../../hooks/useSimulation'
-import type { SimulationRun } from '../../types/models'
 import { EMPTY, dateTime, int, msFine, times } from '../../utils/format'
 import { checksumsMatch } from '../../utils/telemetry'
 import { Card, CardTitle } from '../common/Card'
@@ -16,9 +15,9 @@ import { StaticResults } from '../parallel/StaticResults'
 import { PhaseCard } from '../pipeline/PhaseCard'
 
 function LatestPipeline({ work }: { work: ParallelWork }) {
-  const history = useHistory()
+  const { history, run } = useSelectedRun()
   const offline = useApiState() === 'offline'
-  const latest = history.data?.find((r): r is SimulationRun => r.kind === 'simulation' && r.status === 'done')
+  const latest = run?.status === 'done' ? run : undefined
   const { data, error } = useSimulation(latest?.id)
   const phase = data?.pipeline?.phases.find((p) => p.id === work.phase)
   let body
@@ -35,10 +34,10 @@ function LatestPipeline({ work }: { work: ParallelWork }) {
   } else if (!history.data || (offline && !latest)) body = <DataState error={history.error} />
   else if (!latest) body = <p className="text-sm text-muted">{EMPTY} No finished simulation yet. <Link to="/" className="text-perf underline">Run the baseline</Link>.</p>
   else if (!data) body = <DataState error={error} />
-  else body = <p className="text-sm text-muted">{EMPTY} The latest simulation was saved without a pipeline measurement.</p>
+  else body = <p className="text-sm text-muted">{EMPTY} This simulation was saved without a pipeline measurement.</p>
   return (
     <div>
-      <h3 className="mb-1 text-sm font-semibold">In the latest simulation run’s pipeline</h3>
+      <h3 className="mb-1 text-sm font-semibold">In the selected simulation run’s pipeline</h3>
       {body}
     </div>
   )

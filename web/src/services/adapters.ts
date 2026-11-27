@@ -20,6 +20,13 @@ export const toHealth = (w: WireHealth): Health => ({
   backends: w.backends.map(({ id, available, detail, reason, gpu }) => ({ id, available, detail, reason, gpu })),
   queue: { runningJobId: w.queue.running, queued: w.queue.queued, maxQueued: w.queue.max_queued },
   lastSimulation: w.last_simulation && { id: w.last_simulation.id, finishedAt: w.last_simulation.finished_at_ms },
+  simulation: {
+    bagCount: w.options.simulation_limits.bag_count,
+    capacityPct: w.options.simulation_limits.capacity_pct,
+    serverMultiplier: w.options.simulation_limits.server_multiplier,
+    threads: w.options.simulation_limits.threads,
+  },
+  simulationDefaults: toSimConfig(w.options.simulation_defaults),
   sweep: {
     scenarios: w.options.scenarios,
     routings: w.options.routings,
@@ -53,6 +60,7 @@ export const toProgress = (w: WireProgress): JobProgress => ({
 })
 
 const toSimConfig = (w: WireSimConfig): SimulationConfig => ({
+  threads: w.threads, classifyBackend: w.classify_backend,
   scenario: w.scenario, routing: w.routing, policy: w.policy,
   capacityPct: w.capacity_pct, serverMultiplier: w.server_multiplier, bagCount: w.bag_count,
 })
@@ -60,9 +68,11 @@ const toSimConfig = (w: WireSimConfig): SimulationConfig => ({
 export const fromSimConfig = (c: SimulationConfig): WireSimConfig => ({
   scenario: c.scenario, routing: c.routing, policy: c.policy,
   capacity_pct: c.capacityPct, server_multiplier: c.serverMultiplier, bag_count: c.bagCount,
+  // JSON leaves out undefined values
+  threads: c.threads, classify_backend: c.classifyBackend,
 })
 
-const toSummary = (w: WireSimSummary): SimulationSummary => ({
+export const toSummary = (w: WireSimSummary): SimulationSummary => ({
   totalBags: w.total_bags,
   loadedOnTime: w.loaded_on_time,
   delayedBags: w.delayed_bags,
@@ -72,7 +82,9 @@ const toSummary = (w: WireSimSummary): SimulationSummary => ({
 })
 
 export function toRun(w: WireHistoryItem): Run {
-  const base = { id: w.id, status: w.status, createdAt: w.created_at_ms, finishedAt: w.finished_at_ms, error: w.error }
+  const base = {
+    id: w.id, status: w.status, createdAt: w.created_at_ms, finishedAt: w.finished_at_ms, error: w.error, retained: w.retained,
+  }
   switch (w.kind) {
     case 'simulation':
       return { ...base, kind: w.kind, config: toSimConfig(w.config), summary: w.summary && toSummary(w.summary) }

@@ -8,6 +8,7 @@ import { StatusLabel } from '../components/common/StatusLabel'
 import { BackendComparison } from '../components/parallel/BackendComparison'
 import { ChecksumVerifier } from '../components/parallel/ChecksumVerifier'
 import { RunningRepetitions } from '../components/parallel/RunningRepetitions'
+import { SelectedRunBar } from '../components/operations/SelectedRun'
 import { ParallelSpeedupCard } from '../components/parallel/ParallelSpeedupCard'
 import { TimelineView } from '../components/parallel/TimelineView'
 import { WorkloadInput } from '../components/parallel/WorkloadInput'
@@ -102,6 +103,7 @@ export function ParallelStudioPage() {
         <h1 className="text-2xl font-bold">Parallel Execution Studio</h1>
         <p className="text-sm text-muted">One workload run sequentially and on a chosen backend, with the record of every task.</p>
       </div>
+      <SelectedRunBar />
       <WorkloadInput
         request={request} health={health} busy={busy} offline={offline}
         onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}

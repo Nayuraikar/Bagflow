@@ -33,6 +33,13 @@ export interface Health {
     repetitions: [number, number]
     threads: [number, number]
   }
+  simulation: {
+    bagCount: [number, number]
+    capacityPct: [number, number]
+    serverMultiplier: [number, number]
+    threads: [number, number]
+  }
+  simulationDefaults: SimulationConfig
   sweep: {
     scenarios: string[]
     routings: string[]
@@ -69,6 +76,9 @@ export interface SimulationConfig {
   capacityPct: number
   serverMultiplier: number
   bagCount: number
+  /** Left to the API's defaults when absent. */
+  threads?: number
+  classifyBackend?: string
 }
 
 export interface SimulationSummary {
@@ -107,6 +117,8 @@ interface RunBase {
   createdAt: number
   finishedAt: number | null
   error: string | null
+  /** Simulations only: whether bag histories and time-series are still in memory. */
+  retained: boolean
 }
 
 export type SimulationRun = RunBase & { kind: 'simulation'; config: SimulationConfig; summary: SimulationSummary | null }

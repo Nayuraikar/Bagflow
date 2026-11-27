@@ -35,6 +35,13 @@ export interface WireHealth {
       max_experiments: number
       max_simulated_bags: number
     }
+    simulation_defaults: WireSimConfig
+    simulation_limits: {
+      bag_count: [number, number]
+      capacity_pct: [number, number]
+      server_multiplier: [number, number]
+      threads: [number, number]
+    }
     benchmark_limits: {
       bag_count: [number, number]
       repetitions: [number, number]

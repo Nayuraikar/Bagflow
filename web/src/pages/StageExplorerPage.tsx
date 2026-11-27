@@ -1,6 +1,7 @@
 import { useSearchParams } from 'react-router'
 import { Card } from '../components/common/Card'
 import { StatusLabel } from '../components/common/StatusLabel'
+import { SelectedRunBar } from '../components/operations/SelectedRun'
 import { StageContribution } from '../components/stages/StageContribution'
 import { STAGES, type BaggageStage } from '../config/stages'
 
@@ -21,6 +22,7 @@ export function StageExplorerPage() {
           The seven baggage stages. The simulation itself is sequential; the parallel work listed here runs beside it, on whole batches.
         </p>
       </div>
+      <SelectedRunBar />
       <nav aria-label="Baggage stages" className="flex flex-wrap gap-2">
         {STAGES.map((s, i) => (
           <button

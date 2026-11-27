@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { Outlet } from 'react-router'
 import { useApiState, useHealth } from '../hooks/useHealth'
 import { Sidebar } from './Sidebar'
@@ -18,7 +19,9 @@ export function DashboardLayout() {
           </div>
         )}
         <main className="mx-auto max-w-6xl p-4 md:p-8">
-          <Outlet />
+          <Suspense fallback={<p className="text-sm text-muted">Loading the page…</p>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>
