@@ -18,3 +18,5 @@ target-*/
 /bin/
 # the API's job records
 data/
+
+.claude/
